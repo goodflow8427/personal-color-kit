@@ -36,6 +36,27 @@ const resizeCanvas = (sourceCanvas: HTMLCanvasElement, maxWidth = 800): string =
   return canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
 };
 
+// 색상 스와치 컴포넌트 (클릭 시 hex 복사)
+function ColorSwatch({ color, size = 40, onCopy, dim = false }: { color: string; size?: number; onCopy: (c: string) => void; dim?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <button
+        onClick={() => onCopy(color)}
+        title="클릭하면 색상 코드가 복사돼요"
+        style={{
+          width: size, height: size, borderRadius: "50%", background: color,
+          boxShadow: dim ? "none" : `0 0 0 3px #fff, 0 0 0 5px ${color}`,
+          opacity: dim ? 0.5 : 1, border: "none", cursor: "pointer",
+          transition: "transform 0.2s",
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.1)"}
+        onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
+      />
+      <span style={{ fontSize: 9, color: "#888", fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, letterSpacing: 0.3 }}>{color}</span>
+    </div>
+  );
+}
+
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -59,15 +80,32 @@ export default function Home() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [mobileView, setMobileView] = useState<"kit" | "chat">("kit"); // 모바일 화면 전환
+  const [mobileView, setMobileView] = useState<"kit" | "chat">("kit");
+  const [analyzeStep, setAnalyzeStep] = useState(0); // 분석 진행 단계
+  const [toast, setToast] = useState<string | null>(null); // 토스트 알림
 
-  // 화면 크기 감지
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // 분석 중 단계별 메시지 자동 진행
+  useEffect(() => {
+    if (!isAnalyzing) { setAnalyzeStep(0); return; }
+    const interval = setInterval(() => {
+      setAnalyzeStep(s => (s + 1) % 4);
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [isAnalyzing]);
+
+  // hex 복사 + 토스트
+  const copyHex = (hex: string) => {
+    navigator.clipboard?.writeText(hex);
+    setToast(`${hex} 복사됨 ✓`);
+    setTimeout(() => setToast(null), 1800);
+  };
 
   const startCam = async () => {
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -117,7 +155,7 @@ export default function Home() {
     }
     const data = await resizeImage(f);
     setShopImg(data);
-    if (isMobile) setMobileView("chat"); // 모바일에서는 채팅 화면으로 전환
+    if (isMobile) setMobileView("chat");
     await analyzeShopItem(data);
   };
 
@@ -199,17 +237,61 @@ export default function Home() {
 
   const acc = kit ? (SEASONS[kit.season]?.accent || "#C2185B") : "#C2185B";
 
+  // ── ANALYZING SCREEN (별도) ──
+  if (phase === "analyzing") {
+    const steps = ["📸 사진 분석 중", "🎨 피부톤 측정 중", "✨ 컬러 매칭 중", "💄 키트 생성 중"];
+    return (
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #FFF0F4 0%, #F5F0FF 50%, #FFF8F0 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
+        {/* 회전하는 컬러 휠 */}
+        <div style={{ width: 180, height: 180, position: "relative", marginBottom: 32 }}>
+          <div style={{
+            width: "100%", height: "100%", borderRadius: "50%",
+            background: "conic-gradient(from 0deg, #E65100, #BF360C, #1A237E, #5C6BC0, #E65100)",
+            animation: "spin 3s linear infinite",
+            boxShadow: "0 8px 40px rgba(194, 24, 91, 0.3)",
+          }} />
+          <div style={{
+            position: "absolute", inset: 30, borderRadius: "50%", background: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42,
+          }}>🎨</div>
+        </div>
+
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, color: "#1A1A1A", marginBottom: 8, letterSpacing: "-0.5px", fontStyle: "italic" }}>
+          Analyzing your colors
+        </h2>
+        <p style={{ fontSize: 13, color: "#888", marginBottom: 32 }}>잠시만 기다려주세요...</p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
+          {steps.map((s, i) => (
+            <div key={s} style={{
+              fontSize: 13,
+              color: i === analyzeStep ? "#C2185B" : i < analyzeStep ? "#999" : "#CCC",
+              fontWeight: i === analyzeStep ? 700 : 500,
+              transition: "all 0.3s",
+              opacity: i === analyzeStep ? 1 : 0.6,
+            }}>
+              {i < analyzeStep ? "✓ " : ""}{s}{i === analyzeStep ? "..." : ""}
+            </div>
+          ))}
+        </div>
+
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
   // ── CAPTURE PHASE ──
-  if (phase === "capture" || phase === "analyzing") return (
+  if (phase === "capture") return (
     <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 440 }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🎨</div>
-          <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: "-1px", marginBottom: 8 }}>나만의 컬러 키트</h1>
+      <div style={{ width: "100%", maxWidth: 440, animation: "fadeIn 0.6s ease-out" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>🎨</div>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 14, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 8 }}>YOUR PERSONAL</p>
+          <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-1px", marginBottom: 10, color: "#1A1A1A" }}>나만의 컬러 키트</h1>
           <p style={{ fontSize: 14, color: "#888", lineHeight: 1.7 }}>사진 한 장으로 퍼스널 컬러를 분석하고<br />맞춤 팔레트·메이크업·패션·레이어링 키트를 만들어요</p>
         </div>
 
-        <div style={{ background: "#fff", borderRadius: 24, border: "1px solid #EEE", overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 24, border: "1px solid #EEE", overflow: "hidden", marginBottom: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.04)" }}>
           <div style={{ position: "relative", aspectRatio: "4/3", background: "#F8F6F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: cameraOn ? "block" : "none" }} autoPlay muted playsInline />
             <canvas ref={canvasRef} style={{ display: "none" }} />
@@ -250,10 +332,10 @@ export default function Home() {
 
         <button
           onClick={analyzeColor}
-          disabled={!photoB64 || isAnalyzing}
-          style={{ width: "100%", padding: "18px", borderRadius: 18, border: "none", background: photoB64 && !isAnalyzing ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 && !isAnalyzing ? "#fff" : "#AAA", fontSize: 16, fontWeight: 900, cursor: photoB64 && !isAnalyzing ? "pointer" : "not-allowed" }}
+          disabled={!photoB64}
+          style={{ width: "100%", padding: "18px", borderRadius: 18, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 16, fontWeight: 900, cursor: photoB64 ? "pointer" : "not-allowed", boxShadow: photoB64 ? "0 8px 24px rgba(194,24,91,0.3)" : "none", transition: "all 0.2s" }}
         >
-          {isAnalyzing ? "🎨 분석 중..." : "✨ 내 컬러 키트 만들기"}
+          ✨ 내 컬러 키트 만들기
         </button>
 
         <p style={{ fontSize: 11, color: "#BBB", textAlign: "center", marginTop: 16, lineHeight: 1.6 }}>
@@ -262,14 +344,14 @@ export default function Home() {
       </div>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
     </div>
   );
 
   // ── KIT PHASE ──
-  // 키트 패널 컨텐츠 (재사용)
   const KitContent = (
-    <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", animation: "fadeIn 0.5s ease-out" }}>
       <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {photoB64 && <img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", transform: "scaleX(-1)", border: `2px solid ${acc}` }} alt="" />}
@@ -291,24 +373,18 @@ export default function Home() {
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
         {activeTab === "palette" && (
           <div>
-            <p style={{ fontSize: 12, fontWeight: 800, color: "#1A1A1A", marginBottom: 6 }}>✨ BEST COLORS</p>
+            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 4, fontStyle: "italic" }}>Best Colors</p>
             <p style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.5 }}>이 색들은 내 피부톤을 가장 화사하게 빛나게 해줘요 ✨</p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
               {kit?.palette?.best?.filter(isValidHex).map((c: string) => (
-                <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: c, boxShadow: `0 0 0 3px #fff, 0 0 0 5px ${c}` }} />
-                  <span style={{ fontSize: 9, color: "#888" }}>{c}</span>
-                </div>
+                <ColorSwatch key={c} color={c} onCopy={copyHex} />
               ))}
             </div>
-            <p style={{ fontSize: 12, fontWeight: 800, color: "#1A1A1A", marginBottom: 6 }}>🚫 AVOID COLORS</p>
+            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 4, fontStyle: "italic" }}>Avoid Colors</p>
             <p style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.5 }}>{SEASONS[kit?.season]?.avoidDesc || "이 색들은 피부톤과 잘 맞지 않아요"}</p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               {kit?.palette?.avoid?.filter(isValidHex).map((c: string) => (
-                <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: c, opacity: 0.5 }} />
-                  <span style={{ fontSize: 9, color: "#888" }}>{c}</span>
-                </div>
+                <ColorSwatch key={c} color={c} onCopy={copyHex} dim />
               ))}
             </div>
           </div>
@@ -317,16 +393,16 @@ export default function Home() {
         {activeTab === "makeup" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
-              <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>🫧 FOUNDATION</p>
+              <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>🫧 Foundation</p>
               <div style={{ background: "#FAF8F5", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#444", lineHeight: 1.7 }}>{kit?.makeup?.foundation}</div>
             </div>
-            {[{ key: "blush", label: "🌸 BLUSH" }, { key: "eye", label: "👁 EYE" }, { key: "lip", label: "💋 LIP" }].map(({ key, label }) => (
+            {[{ key: "blush", label: "🌸 Blush" }, { key: "eye", label: "👁 Eye" }, { key: "lip", label: "💋 Lip" }].map(({ key, label }) => (
               <div key={key}>
-                <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>{label}</p>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>{label}</p>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", gap: 6 }}>
                     {kit?.makeup?.[key]?.colors?.filter(isValidHex).map((c: string) => (
-                      <div key={c} style={{ width: 32, height: 32, borderRadius: "50%", background: c, boxShadow: `0 0 0 2px #fff, 0 0 0 4px ${c}` }} />
+                      <ColorSwatch key={c} color={c} size={32} onCopy={copyHex} />
                     ))}
                   </div>
                   <p style={{ fontSize: 12, color: "#555", lineHeight: 1.7, flex: 1, minWidth: 150 }}>{kit?.makeup?.[key]?.desc}</p>
@@ -338,9 +414,9 @@ export default function Home() {
 
         {activeTab === "fashion" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {[{ key: "tops", label: "👕 상의" }, { key: "bottoms", label: "👖 하의" }, { key: "outwear", label: "🧥 아우터" }, { key: "avoid", label: "⚠️ 피해야 할 스타일" }].map(({ key, label }) => (
+            {[{ key: "tops", label: "👕 Tops" }, { key: "bottoms", label: "👖 Bottoms" }, { key: "outwear", label: "🧥 Outerwear" }, { key: "avoid", label: "⚠️ Avoid" }].map(({ key, label }) => (
               <div key={key}>
-                <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>{label}</p>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>{label}</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {kit?.fashion?.[key]?.map((item: string) => (
                     <span key={item} style={{ background: key === "avoid" ? "#F5F5F5" : `${acc}12`, color: key === "avoid" ? "#999" : acc, fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20 }}>{item}</span>
@@ -357,13 +433,13 @@ export default function Home() {
               <div key={idx} style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, border: "1px solid #F0EDE8" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <div>
-                    <p style={{ fontSize: 14, fontWeight: 800 }}>{look.name}</p>
+                    <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic" }}>{look.name}</p>
                     <p style={{ fontSize: 11, color: "#999" }}>{look.mood}</p>
                   </div>
                   {look.colors?.length > 0 && (
                     <div style={{ display: "flex" }}>
                       {look.colors.filter(isValidHex).map((c: string, ci: number) => (
-                        <div key={ci} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: "2px solid #fff", marginLeft: ci > 0 ? -6 : 0 }} />
+                        <button key={ci} onClick={() => copyHex(c)} title={c} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: "2px solid #fff", marginLeft: ci > 0 ? -6 : 0, cursor: "pointer", padding: 0 }} />
                       ))}
                     </div>
                   )}
@@ -384,7 +460,6 @@ export default function Home() {
     </div>
   );
 
-  // 쇼핑 패널 컨텐츠 (재사용)
   const ShopContent = (
     <div style={{ display: "flex", flexDirection: "column", background: "#FAFAF7", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E4DE", background: "#fff" }}>
@@ -441,16 +516,18 @@ export default function Home() {
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", fontFamily: "'Noto Sans KR',sans-serif" }}>
-      <header style={{ background: "#fff", borderBottom: "1px solid #EEE", padding: "0 20px", height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>🎨</span>
-          <strong style={{ fontSize: 16, letterSpacing: "-1px" }}>COLOR KIT</strong>
-          {kit && <span style={{ fontSize: 10, background: acc, color: "#fff", padding: "2px 8px", borderRadius: 20 }}>{kit.season}</span>}
+      <header style={{ background: "#fff", borderBottom: "1px solid #EEE", padding: "0 20px", height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🎨</span>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <strong style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, letterSpacing: "-0.5px", color: "#1A1A1A", fontStyle: "italic", lineHeight: 1 }}>Color Kit</strong>
+            <span style={{ fontSize: 9, color: "#999", letterSpacing: 1.5 }}>YOUR PERSONAL PALETTE</span>
+          </div>
+          {kit && <span style={{ fontSize: 10, background: acc, color: "#fff", padding: "3px 10px", borderRadius: 20, fontWeight: 700, marginLeft: 4 }}>{kit.season}</span>}
         </div>
-        <button onClick={() => { setPhase("capture"); setKit(null); setPhotoB64(null); setMessages([]); setChatHistory([]); setShopImg(null); }} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "4px 12px", cursor: "pointer" }}>🔄 재분석</button>
+        <button onClick={() => { setPhase("capture"); setKit(null); setPhotoB64(null); setMessages([]); setChatHistory([]); setShopImg(null); }} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "5px 14px", cursor: "pointer", fontWeight: 600 }}>🔄 재분석</button>
       </header>
 
-      {/* 모바일: 탭 전환 방식 */}
       {isMobile ? (
         <>
           <div style={{ display: "flex", borderBottom: "1px solid #EEE", background: "#fff", flexShrink: 0 }}>
@@ -466,18 +543,32 @@ export default function Home() {
           </div>
         </>
       ) : (
-        /* 데스크톱: 분할 화면 */
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
           <div style={{ width: "52%", borderRight: "1px solid #EEE", overflow: "hidden" }}>{KitContent}</div>
           <div style={{ flex: 1, overflow: "hidden" }}>{ShopContent}</div>
         </div>
       )}
 
+      {/* 토스트 알림 */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
+          background: "#1A1A1A", color: "#fff", padding: "10px 20px", borderRadius: 24,
+          fontSize: 13, fontWeight: 600, zIndex: 1000,
+          animation: "toastIn 0.3s ease-out",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+        }}>
+          {toast}
+        </div>
+      )}
+
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600;1,700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
       `}</style>
     </div>
   );
