@@ -2,16 +2,15 @@
 
 import { useState, useRef, useEffect } from "react";
 
-const SEASONS: Record<string, { bg: string; accent: string; label: string }> = {
-  "봄웜": { bg: "linear-gradient(135deg,#FFE0B2,#FFF3E0)", accent: "#E65100", label: "🌸 Spring Warm" },
-  "여름쿨": { bg: "linear-gradient(135deg,#E3F2FD,#F3E5F5)", accent: "#5C6BC0", label: "🌊 Summer Cool" },
-  "가을웜": { bg: "linear-gradient(135deg,#FFF8E1,#FBE9E7)", accent: "#BF360C", label: "🍂 Autumn Warm" },
-  "겨울쿨": { bg: "linear-gradient(135deg,#E8EAF6,#ECEFF1)", accent: "#1A237E", label: "❄️ Winter Cool" },
+const SEASONS: Record<string, { bg: string; accent: string; label: string; avoidDesc: string }> = {
+  "봄웜": { bg: "linear-gradient(135deg,#FFE0B2,#FFF3E0)", accent: "#E65100", label: "🌸 Spring Warm", avoidDesc: "어둡고 차가운 색은 피부를 칙칙하게 만들어요" },
+  "여름쿨": { bg: "linear-gradient(135deg,#E3F2FD,#F3E5F5)", accent: "#5C6BC0", label: "🌊 Summer Cool", avoidDesc: "강한 웜톤이나 노란빛은 안색을 누렇게 보이게 해요" },
+  "가을웜": { bg: "linear-gradient(135deg,#FFF8E1,#FBE9E7)", accent: "#BF360C", label: "🍂 Autumn Warm", avoidDesc: "차가운 파스텔이나 형광 색은 피부를 창백하게 보이게 해요" },
+  "겨울쿨": { bg: "linear-gradient(135deg,#E8EAF6,#ECEFF1)", accent: "#1A237E", label: "❄️ Winter Cool", avoidDesc: "탁한 어스 톤은 피부를 피곤해 보이게 만들어요" },
 };
 
 const isValidHex = (color: string) => /^#[0-9A-F]{6}$/i.test(color);
 
-// 이미지 리사이즈 (canvas 기반) - 800px 이하로 축소
 const resizeImage = (file: File, maxWidth = 800): Promise<string> =>
   new Promise((res) => {
     const img = new Image();
@@ -28,7 +27,6 @@ const resizeImage = (file: File, maxWidth = 800): Promise<string> =>
     img.src = url;
   });
 
-// 캔버스 데이터를 800px로 리사이즈
 const resizeCanvas = (sourceCanvas: HTMLCanvasElement, maxWidth = 800): string => {
   const scale = Math.min(1, maxWidth / sourceCanvas.width);
   const canvas = document.createElement("canvas");
@@ -45,7 +43,7 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
   const shopFileRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const isComposingRef = useRef(false); // 한글 IME 입력 중 체크
+  const isComposingRef = useRef(false);
 
   const [phase, setPhase] = useState<"capture" | "analyzing" | "kit">("capture");
   const [cameraOn, setCameraOn] = useState(false);
@@ -59,7 +57,17 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isUploading, setIsUploading] = useState(false); // 업로드 로딩
+  const [isUploading, setIsUploading] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileView, setMobileView] = useState<"kit" | "chat">("kit"); // 모바일 화면 전환
+
+  // 화면 크기 감지
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   const startCam = async () => {
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -68,7 +76,7 @@ export default function Home() {
       streamRef.current = s;
       if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play(); }
       setCameraOn(true);
-      setError(null); // 카메라 켤 때 에러 초기화
+      setError(null);
     } catch { setError("카메라 권한을 허용해주세요."); }
   };
 
@@ -84,10 +92,9 @@ export default function Home() {
     c.width = v.videoWidth;
     c.height = v.videoHeight;
     c.getContext("2d")?.drawImage(v, 0, 0);
-    // 카메라 사진도 800px로 리사이즈 (버그 수정)
     const resized = resizeCanvas(c);
     setPhotoB64(resized);
-    setError(null); // 새 사진 찍으면 에러 초기화
+    setError(null);
     stopCam();
   };
 
@@ -98,9 +105,7 @@ export default function Home() {
       const data = await resizeImage(f);
       setPhotoB64(data);
       setError(null);
-    } catch {
-      setError("이미지 처리 중 오류가 발생했어요.");
-    }
+    } catch { setError("이미지 처리 중 오류가 발생했어요."); }
     setIsUploading(false);
   };
 
@@ -112,6 +117,7 @@ export default function Home() {
     }
     const data = await resizeImage(f);
     setShopImg(data);
+    if (isMobile) setMobileView("chat"); // 모바일에서는 채팅 화면으로 전환
     await analyzeShopItem(data);
   };
 
@@ -130,7 +136,7 @@ export default function Home() {
       if (data.error) throw new Error(data.error);
       setKit(data.kit);
       setPhase("kit");
-      setMessages([{ role: "ai", text: `✨ ${data.kit.season} 분석 완료! 왼쪽 키트를 확인해보세요. 쇼핑 중 궁금한 점은 언제든 물어봐요 💕` }]);
+      setMessages([{ role: "ai", text: `✨ ${data.kit.season} 분석 완료! 키트를 확인해보세요. 쇼핑 중 궁금한 점은 언제든 물어봐요 💕` }]);
       setChatHistory([
         { role: "user", content: `내 퍼스널 컬러: ${JSON.stringify(data.kit)}` },
         { role: "assistant", content: `${data.kit.season} 분석 완료! 쇼핑 도움 드릴게요 💕` },
@@ -162,7 +168,6 @@ export default function Home() {
     setChatLoading(false);
   };
 
-  // 자동 전송 가능하도록 메시지 텍스트를 직접 받는 버전
   const sendChat = async (overrideText?: string) => {
     const txt = (overrideText ?? chatInput).trim();
     if (!txt || chatLoading) return;
@@ -182,7 +187,6 @@ export default function Home() {
     setChatLoading(false);
   };
 
-  // 한글 IME 안전한 키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !isComposingRef.current && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -251,6 +255,10 @@ export default function Home() {
         >
           {isAnalyzing ? "🎨 분석 중..." : "✨ 내 컬러 키트 만들기"}
         </button>
+
+        <p style={{ fontSize: 11, color: "#BBB", textAlign: "center", marginTop: 16, lineHeight: 1.6 }}>
+          💡 더 정확한 분석을 위해<br />자연광에서 메이크업 없이 정면 사진을 추천해요
+        </p>
       </div>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -259,6 +267,178 @@ export default function Home() {
   );
 
   // ── KIT PHASE ──
+  // 키트 패널 컨텐츠 (재사용)
+  const KitContent = (
+    <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {photoB64 && <img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", transform: "scaleX(-1)", border: `2px solid ${acc}` }} alt="" />}
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: acc }}>{SEASONS[kit?.season]?.label}</div>
+            <div style={{ fontSize: 12, color: "#777", marginTop: 2 }}>{kit?.summary}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", borderBottom: "1px solid #EEE" }}>
+        {["palette","makeup","fashion","layering"].map(t => (
+          <button key={t} onClick={() => setActiveTab(t)} style={{ flex: 1, padding: "10px 4px", border: "none", background: "none", fontSize: 11, fontWeight: activeTab === t ? 800 : 500, color: activeTab === t ? acc : "#999", borderBottom: activeTab === t ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
+            {t === "palette" ? "🎨 팔레트" : t === "makeup" ? "💄 메이크업" : t === "fashion" ? "👗 패션" : "🧥 레이어링"}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+        {activeTab === "palette" && (
+          <div>
+            <p style={{ fontSize: 12, fontWeight: 800, color: "#1A1A1A", marginBottom: 6 }}>✨ BEST COLORS</p>
+            <p style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.5 }}>이 색들은 내 피부톤을 가장 화사하게 빛나게 해줘요 ✨</p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
+              {kit?.palette?.best?.filter(isValidHex).map((c: string) => (
+                <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: c, boxShadow: `0 0 0 3px #fff, 0 0 0 5px ${c}` }} />
+                  <span style={{ fontSize: 9, color: "#888" }}>{c}</span>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 12, fontWeight: 800, color: "#1A1A1A", marginBottom: 6 }}>🚫 AVOID COLORS</p>
+            <p style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.5 }}>{SEASONS[kit?.season]?.avoidDesc || "이 색들은 피부톤과 잘 맞지 않아요"}</p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {kit?.palette?.avoid?.filter(isValidHex).map((c: string) => (
+                <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: c, opacity: 0.5 }} />
+                  <span style={{ fontSize: 9, color: "#888" }}>{c}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "makeup" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>🫧 FOUNDATION</p>
+              <div style={{ background: "#FAF8F5", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#444", lineHeight: 1.7 }}>{kit?.makeup?.foundation}</div>
+            </div>
+            {[{ key: "blush", label: "🌸 BLUSH" }, { key: "eye", label: "👁 EYE" }, { key: "lip", label: "💋 LIP" }].map(({ key, label }) => (
+              <div key={key}>
+                <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>{label}</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {kit?.makeup?.[key]?.colors?.filter(isValidHex).map((c: string) => (
+                      <div key={c} style={{ width: 32, height: 32, borderRadius: "50%", background: c, boxShadow: `0 0 0 2px #fff, 0 0 0 4px ${c}` }} />
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 12, color: "#555", lineHeight: 1.7, flex: 1, minWidth: 150 }}>{kit?.makeup?.[key]?.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "fashion" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {[{ key: "tops", label: "👕 상의" }, { key: "bottoms", label: "👖 하의" }, { key: "outwear", label: "🧥 아우터" }, { key: "avoid", label: "⚠️ 피해야 할 스타일" }].map(({ key, label }) => (
+              <div key={key}>
+                <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>{label}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {kit?.fashion?.[key]?.map((item: string) => (
+                    <span key={item} style={{ background: key === "avoid" ? "#F5F5F5" : `${acc}12`, color: key === "avoid" ? "#999" : acc, fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20 }}>{item}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "layering" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {kit?.layering?.map((look: any, idx: number) => (
+              <div key={idx} style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, border: "1px solid #F0EDE8" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div>
+                    <p style={{ fontSize: 14, fontWeight: 800 }}>{look.name}</p>
+                    <p style={{ fontSize: 11, color: "#999" }}>{look.mood}</p>
+                  </div>
+                  {look.colors?.length > 0 && (
+                    <div style={{ display: "flex" }}>
+                      {look.colors.filter(isValidHex).map((c: string, ci: number) => (
+                        <div key={ci} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: "2px solid #fff", marginLeft: ci > 0 ? -6 : 0 }} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+                  {look.items?.map((item: string) => (
+                    <span key={item} style={{ background: `${acc}12`, color: acc, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20 }}>{item}</span>
+                  ))}
+                </div>
+                <div style={{ borderLeft: `3px solid ${acc}`, paddingLeft: 10 }}>
+                  <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6 }}>💡 {look.tip}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // 쇼핑 패널 컨텐츠 (재사용)
+  const ShopContent = (
+    <div style={{ display: "flex", flexDirection: "column", background: "#FAFAF7", height: "100%", overflow: "hidden" }}>
+      <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E4DE", background: "#fff" }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>🛍️ 상품 올리면 AI가 어울리는지 바로 알려줘요</p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div onClick={() => shopFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: shopImg ? "none" : "2px dashed #DDD", background: "#F7F5F2", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {shopImg ? <img src={`data:image/jpeg;base64,${shopImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#CCC" }}>+</span>}
+          </div>
+          <input ref={shopFileRef} type="file" accept="image/*" onChange={handleShopUpload} style={{ display: "none" }} />
+          <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>상품 이미지를 올리면<br />키트와 비교해서 분석해요</p>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {messages.map((m, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
+            {m.role === "ai" && (
+              <div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🎨</div>
+            )}
+            <div style={{ maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: m.role === "user" ? `${acc}18` : "#fff", border: m.role === "user" ? `1px solid ${acc}30` : "1px solid #EEE", color: m.role === "user" ? acc : "#333", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "keep-all" }}>{m.text}</div>
+          </div>
+        ))}
+        {chatLoading && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🎨</div>
+            <div style={{ background: "#fff", border: "1px solid #EEE", borderRadius: "18px 18px 18px 4px", padding: "12px 16px", display: "flex", gap: 5 }}>
+              {[0,1,2].map(i => <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: acc, display: "inline-block", animation: `bounce 1.2s ${i*0.2}s infinite` }} />)}
+            </div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+
+      <div style={{ padding: "6px 16px", display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {["이 색 나한테 어울려?","대안 색상 추천해줘","레이어링 어떻게 해?"].map(s => (
+          <button key={s} onClick={() => sendChat(s)} disabled={chatLoading} style={{ background: "#F0EDE8", border: "none", borderRadius: 20, padding: "5px 11px", color: "#777", fontSize: 10, cursor: chatLoading ? "not-allowed" : "pointer", fontWeight: 600, opacity: chatLoading ? 0.5 : 1 }}>{s}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: "10px 16px", borderTop: "1px solid #E8E4DE", display: "flex", gap: 8, background: "#fff" }}>
+        <input
+          value={chatInput}
+          onChange={e => setChatInput(e.target.value)}
+          onCompositionStart={() => { isComposingRef.current = true; }}
+          onCompositionEnd={() => { isComposingRef.current = false; }}
+          onKeyDown={handleKeyDown}
+          placeholder="궁금한 점을 물어보세요..."
+          style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "9px 16px", color: "#333", fontSize: 13, outline: "none" }}
+        />
+        <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading} style={{ width: 38, height: 38, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 15 }}>↑</button>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", fontFamily: "'Noto Sans KR',sans-serif" }}>
       <header style={{ background: "#fff", borderBottom: "1px solid #EEE", padding: "0 20px", height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
@@ -270,173 +450,29 @@ export default function Home() {
         <button onClick={() => { setPhase("capture"); setKit(null); setPhotoB64(null); setMessages([]); setChatHistory([]); setShopImg(null); }} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "4px 12px", cursor: "pointer" }}>🔄 재분석</button>
       </header>
 
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Kit Panel */}
-        <div style={{ width: "52%", borderRight: "1px solid #EEE", background: "#fff", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {photoB64 && <img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", transform: "scaleX(-1)", border: `2px solid ${acc}` }} alt="" />}
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 900, color: acc }}>{SEASONS[kit?.season]?.label}</div>
-                <div style={{ fontSize: 12, color: "#777", marginTop: 2 }}>{kit?.summary}</div>
-              </div>
-            </div>
+      {/* 모바일: 탭 전환 방식 */}
+      {isMobile ? (
+        <>
+          <div style={{ display: "flex", borderBottom: "1px solid #EEE", background: "#fff", flexShrink: 0 }}>
+            <button onClick={() => setMobileView("kit")} style={{ flex: 1, padding: "12px", border: "none", background: "none", fontSize: 13, fontWeight: mobileView === "kit" ? 800 : 500, color: mobileView === "kit" ? acc : "#999", borderBottom: mobileView === "kit" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
+              🎨 내 키트
+            </button>
+            <button onClick={() => setMobileView("chat")} style={{ flex: 1, padding: "12px", border: "none", background: "none", fontSize: 13, fontWeight: mobileView === "chat" ? 800 : 500, color: mobileView === "chat" ? acc : "#999", borderBottom: mobileView === "chat" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
+              🛍️ 쇼핑 도움
+            </button>
           </div>
-
-          <div style={{ display: "flex", borderBottom: "1px solid #EEE" }}>
-            {["palette","makeup","fashion","layering"].map(t => (
-              <button key={t} onClick={() => setActiveTab(t)} style={{ flex: 1, padding: "10px 4px", border: "none", background: "none", fontSize: 11, fontWeight: activeTab === t ? 800 : 500, color: activeTab === t ? acc : "#999", borderBottom: activeTab === t ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
-                {t === "palette" ? "🎨 팔레트" : t === "makeup" ? "💄 메이크업" : t === "fashion" ? "👗 패션" : "🧥 레이어링"}
-              </button>
-            ))}
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            {mobileView === "kit" ? KitContent : ShopContent}
           </div>
-
-          <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-            {activeTab === "palette" && (
-              <div>
-                <p style={{ fontSize: 12, fontWeight: 800, color: "#1A1A1A", marginBottom: 12 }}>✨ BEST COLORS</p>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-                  {kit?.palette?.best?.filter(isValidHex).map((c: string) => (
-                    <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                      <div style={{ width: 40, height: 40, borderRadius: "50%", background: c, boxShadow: `0 0 0 3px #fff, 0 0 0 5px ${c}` }} />
-                      <span style={{ fontSize: 9, color: "#888" }}>{c}</span>
-                    </div>
-                  ))}
-                </div>
-                <p style={{ fontSize: 12, fontWeight: 800, color: "#1A1A1A", marginBottom: 12 }}>🚫 AVOID COLORS</p>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {kit?.palette?.avoid?.filter(isValidHex).map((c: string) => (
-                    <div key={c} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                      <div style={{ width: 40, height: 40, borderRadius: "50%", background: c, opacity: 0.5 }} />
-                      <span style={{ fontSize: 9, color: "#888" }}>{c}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "makeup" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <div>
-                  <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>🫧 FOUNDATION</p>
-                  <div style={{ background: "#FAF8F5", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#444", lineHeight: 1.7 }}>{kit?.makeup?.foundation}</div>
-                </div>
-                {[{ key: "blush", label: "🌸 BLUSH" }, { key: "eye", label: "👁 EYE" }, { key: "lip", label: "💋 LIP" }].map(({ key, label }) => (
-                  <div key={key}>
-                    <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>{label}</p>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {kit?.makeup?.[key]?.colors?.filter(isValidHex).map((c: string) => (
-                          <div key={c} style={{ width: 32, height: 32, borderRadius: "50%", background: c, boxShadow: `0 0 0 2px #fff, 0 0 0 4px ${c}` }} />
-                        ))}
-                      </div>
-                      <p style={{ fontSize: 12, color: "#555", lineHeight: 1.7 }}>{kit?.makeup?.[key]?.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeTab === "fashion" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {[{ key: "tops", label: "👕 상의" }, { key: "bottoms", label: "👖 하의" }, { key: "outwear", label: "🧥 아우터" }, { key: "avoid", label: "⚠️ 피해야 할 스타일" }].map(({ key, label }) => (
-                  <div key={key}>
-                    <p style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>{label}</p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {kit?.fashion?.[key]?.map((item: string) => (
-                        <span key={item} style={{ background: key === "avoid" ? "#F5F5F5" : `${acc}12`, color: key === "avoid" ? "#999" : acc, fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20 }}>{item}</span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeTab === "layering" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {kit?.layering?.map((look: any, idx: number) => (
-                  <div key={idx} style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, border: "1px solid #F0EDE8" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <div>
-                        <p style={{ fontSize: 14, fontWeight: 800 }}>{look.name}</p>
-                        <p style={{ fontSize: 11, color: "#999" }}>{look.mood}</p>
-                      </div>
-                      {look.colors?.length > 0 && (
-                        <div style={{ display: "flex" }}>
-                          {look.colors.filter(isValidHex).map((c: string, ci: number) => (
-                            <div key={ci} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: "2px solid #fff", marginLeft: ci > 0 ? -6 : 0 }} />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
-                      {look.items?.map((item: string) => (
-                        <span key={item} style={{ background: `${acc}12`, color: acc, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20 }}>{item}</span>
-                      ))}
-                    </div>
-                    <div style={{ borderLeft: `3px solid ${acc}`, paddingLeft: 10 }}>
-                      <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6 }}>💡 {look.tip}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        </>
+      ) : (
+        /* 데스크톱: 분할 화면 */
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+          <div style={{ width: "52%", borderRight: "1px solid #EEE", overflow: "hidden" }}>{KitContent}</div>
+          <div style={{ flex: 1, overflow: "hidden" }}>{ShopContent}</div>
         </div>
+      )}
 
-        {/* Shopping Panel */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#FAFAF7" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E4DE", background: "#fff" }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>🛍️ 상품 올리면 AI가 어울리는지 바로 알려줘요</p>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <div onClick={() => shopFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: shopImg ? "none" : "2px dashed #DDD", background: "#F7F5F2", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {shopImg ? <img src={`data:image/jpeg;base64,${shopImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#CCC" }}>+</span>}
-              </div>
-              <input ref={shopFileRef} type="file" accept="image/*" onChange={handleShopUpload} style={{ display: "none" }} />
-              <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>상품 이미지를 올리면<br />키트와 비교해서 분석해요</p>
-            </div>
-          </div>
-
-          <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {messages.map((m, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
-                {m.role === "ai" && (
-                  <div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🎨</div>
-                )}
-                <div style={{ maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: m.role === "user" ? `${acc}18` : "#fff", border: m.role === "user" ? `1px solid ${acc}30` : "1px solid #EEE", color: m.role === "user" ? acc : "#333", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "keep-all" }}>{m.text}</div>
-              </div>
-            ))}
-            {chatLoading && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>🎨</div>
-                <div style={{ background: "#fff", border: "1px solid #EEE", borderRadius: "18px 18px 18px 4px", padding: "12px 16px", display: "flex", gap: 5 }}>
-                  {[0,1,2].map(i => <span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: acc, display: "inline-block", animation: `bounce 1.2s ${i*0.2}s infinite` }} />)}
-                </div>
-              </div>
-            )}
-            <div ref={chatEndRef} />
-          </div>
-
-          <div style={{ padding: "6px 16px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {["이 색 나한테 어울려?","대안 색상 추천해줘","레이어링 어떻게 해?"].map(s => (
-              <button key={s} onClick={() => sendChat(s)} disabled={chatLoading} style={{ background: "#F0EDE8", border: "none", borderRadius: 20, padding: "5px 11px", color: "#777", fontSize: 10, cursor: chatLoading ? "not-allowed" : "pointer", fontWeight: 600, opacity: chatLoading ? 0.5 : 1 }}>{s}</button>
-            ))}
-          </div>
-
-          <div style={{ padding: "10px 16px", borderTop: "1px solid #E8E4DE", display: "flex", gap: 8, background: "#fff" }}>
-            <input
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              onCompositionStart={() => { isComposingRef.current = true; }}
-              onCompositionEnd={() => { isComposingRef.current = false; }}
-              onKeyDown={handleKeyDown}
-              placeholder="궁금한 점을 물어보세요..."
-              style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "9px 16px", color: "#333", fontSize: 13, outline: "none" }}
-            />
-            <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading} style={{ width: 38, height: 38, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 15 }}>↑</button>
-          </div>
-        </div>
-      </div>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
