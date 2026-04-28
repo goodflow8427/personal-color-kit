@@ -11,6 +11,16 @@ const SEASONS: Record<string, { bg: string; accent: string; label: string; avoid
 
 const isValidHex = (color: string) => /^#[0-9A-F]{6}$/i.test(color);
 
+// 색상이 밝은지 어두운지 판단 (글자색 결정용)
+const isLightColor = (hex: string) => {
+  if (!isValidHex(hex)) return false;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6;
+};
+
 const resizeImage = (file: File, maxWidth = 800): Promise<string> =>
   new Promise((res) => {
     const img = new Image();
@@ -36,23 +46,69 @@ const resizeCanvas = (sourceCanvas: HTMLCanvasElement, maxWidth = 800): string =
   return canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
 };
 
-function ColorSwatch({ color, size = 40, onCopy, dim = false }: { color: string; size?: number; onCopy: (c: string) => void; dim?: boolean }) {
+// 큰 컬러 카드 (이름 포함)
+function ColorCard({ color, name, onCopy, dim = false }: { color: { hex: string; name: string } | string; name?: string; onCopy: (c: string) => void; dim?: boolean }) {
+  const hex = typeof color === "string" ? color : color.hex;
+  const colorName = typeof color === "string" ? (name || hex) : color.name;
+  if (!isValidHex(hex)) return null;
+  const textColor = isLightColor(hex) ? "#333" : "#fff";
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-      <button
-        onClick={() => onCopy(color)}
-        title="클릭하면 색상 코드가 복사돼요"
-        style={{
-          width: size, height: size, borderRadius: "50%", background: color,
-          boxShadow: dim ? "none" : `0 0 0 3px #fff, 0 0 0 5px ${color}`,
-          opacity: dim ? 0.5 : 1, border: "none", cursor: "pointer",
-          transition: "transform 0.2s",
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.1)"}
-        onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
-      />
-      <span style={{ fontSize: 9, color: "#888", fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, letterSpacing: 0.3 }}>{color}</span>
-    </div>
+    <button
+      onClick={() => onCopy(hex)}
+      title={`${colorName} (${hex}) - 클릭해서 복사`}
+      style={{
+        background: hex,
+        opacity: dim ? 0.55 : 1,
+        border: "none",
+        borderRadius: 14,
+        padding: "20px 14px",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+        minHeight: 100,
+        boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+        transition: "transform 0.2s, box-shadow 0.2s",
+        textAlign: "left",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = "translateY(-3px)";
+        e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.12)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = "translateY(0)";
+        e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.06)";
+      }}
+    >
+      <div style={{ color: textColor, fontSize: 13, fontWeight: 700, marginBottom: 2, lineHeight: 1.3 }}>{colorName}</div>
+      <div style={{ color: textColor, opacity: 0.7, fontSize: 10, fontFamily: "monospace", letterSpacing: 0.5 }}>{hex.toUpperCase()}</div>
+    </button>
+  );
+}
+
+// 작은 원형 스와치 (메이크업 등)
+function MiniSwatch({ color, name, onCopy }: { color: { hex: string; name: string } | string; name?: string; onCopy: (c: string) => void }) {
+  const hex = typeof color === "string" ? color : color.hex;
+  const colorName = typeof color === "string" ? (name || hex) : color.name;
+  if (!isValidHex(hex)) return null;
+
+  return (
+    <button
+      onClick={() => onCopy(hex)}
+      title={`${colorName} - 클릭해서 복사`}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+        background: "none", border: "none", cursor: "pointer", padding: 0,
+      }}
+    >
+      <div style={{
+        width: 40, height: 40, borderRadius: "50%", background: hex,
+        boxShadow: `0 0 0 3px #fff, 0 0 0 5px ${hex}`,
+        transition: "transform 0.15s",
+      }} />
+      <span style={{ fontSize: 9, color: "#777", fontWeight: 600, marginTop: 4, lineHeight: 1.2, textAlign: "center", maxWidth: 60 }}>{colorName}</span>
+    </button>
   );
 }
 
@@ -97,9 +153,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAnalyzing) { setAnalyzeStep(0); return; }
-    const interval = setInterval(() => {
-      setAnalyzeStep(s => (s + 1) % 4);
-    }, 1500);
+    const interval = setInterval(() => { setAnalyzeStep(s => (s + 1) % 4); }, 1500);
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
@@ -141,21 +195,16 @@ export default function Home() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     setIsUploading(true);
-    try {
-      const data = await resizeImage(f);
-      setPhotoB64(data);
-      setError(null);
-    } catch { setError("이미지 처리 중 오류가 발생했어요."); }
+    try { const data = await resizeImage(f); setPhotoB64(data); setError(null); }
+    catch { setError("이미지 처리 중 오류가 발생했어요."); }
     setIsUploading(false);
   };
 
   const handleWristUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     setIsUploading(true);
-    try {
-      const data = await resizeImage(f);
-      setWristB64(data);
-    } catch { setError("이미지 처리 중 오류가 발생했어요."); }
+    try { const data = await resizeImage(f); setWristB64(data); }
+    catch { setError("이미지 처리 중 오류가 발생했어요."); }
     setIsUploading(false);
   };
 
@@ -184,14 +233,12 @@ export default function Home() {
         body: JSON.stringify({ faceImage: photoB64, wristImage: wristB64 }),
       });
       const data = await res.json();
-
       if (data.qualityFailed) {
         setQualityIssues({ issues: data.issues, advice: data.advice });
         setPhase("capture");
         setIsAnalyzing(false);
         return;
       }
-
       if (data.error) throw new Error(data.error);
       setKit(data.kit);
       setPhase("kit");
@@ -200,10 +247,7 @@ export default function Home() {
         { role: "user", content: `내 퍼스널 컬러: ${JSON.stringify(data.kit)}` },
         { role: "assistant", content: `${data.kit.season} 분석 완료! 쇼핑 도움 드릴게요 💕` },
       ]);
-    } catch {
-      setError("분석 오류가 발생했어요. 다시 시도해주세요.");
-      setPhase("capture");
-    }
+    } catch { setError("분석 오류가 발생했어요. 다시 시도해주세요."); setPhase("capture"); }
     setIsAnalyzing(false);
   };
 
@@ -215,10 +259,7 @@ export default function Home() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [...chatHistory, { role: "user", content: userText }],
-          imageBase64: b64
-        }),
+        body: JSON.stringify({ messages: [...chatHistory, { role: "user", content: userText }], imageBase64: b64 }),
       });
       const data = await res.json();
       setMessages(p => [...p, { role: "ai", text: data.reply }]);
@@ -254,15 +295,8 @@ export default function Home() {
   };
 
   const resetAll = () => {
-    setPhase("guide");
-    setKit(null);
-    setPhotoB64(null);
-    setWristB64(null);
-    setMessages([]);
-    setChatHistory([]);
-    setShopImg(null);
-    setQualityIssues(null);
-    setError(null);
+    setPhase("guide"); setKit(null); setPhotoB64(null); setWristB64(null);
+    setMessages([]); setChatHistory([]); setShopImg(null); setQualityIssues(null); setError(null);
   };
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -270,7 +304,7 @@ export default function Home() {
 
   const acc = kit ? (SEASONS[kit.season]?.accent || "#C2185B") : "#C2185B";
 
-  // ── GUIDE PHASE (체크리스트) ──
+  // ── GUIDE PHASE ──
   if (phase === "guide") return (
     <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
       <div style={{ width: "100%", maxWidth: 480, animation: "fadeIn 0.6s ease-out" }}>
@@ -302,17 +336,10 @@ export default function Home() {
           </ul>
         </div>
 
-        <button
-          onClick={() => setPhase("capture")}
-          style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}
-        >
-          ✨ 시작하기
-        </button>
+        <button onClick={() => setPhase("capture")} style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}>✨ 시작하기</button>
         <p style={{ fontSize: 11, color: "#BBB", textAlign: "center", marginTop: 12 }}>약 30초 ~ 1분 소요</p>
       </div>
-      <style>{`
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
+      <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
   );
 
@@ -322,37 +349,18 @@ export default function Home() {
     return (
       <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #FFF0F4 0%, #F5F0FF 50%, #FFF8F0 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
         <div style={{ width: 180, height: 180, position: "relative", marginBottom: 32 }}>
-          <div style={{
-            width: "100%", height: "100%", borderRadius: "50%",
-            background: "conic-gradient(from 0deg, #E65100, #BF360C, #1A237E, #5C6BC0, #E65100)",
-            animation: "spin 3s linear infinite",
-            boxShadow: "0 8px 40px rgba(194, 24, 91, 0.3)",
-          }} />
-          <div style={{
-            position: "absolute", inset: 30, borderRadius: "50%", background: "#fff",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42,
-          }}>🎨</div>
+          <div style={{ width: "100%", height: "100%", borderRadius: "50%", background: "conic-gradient(from 0deg, #E65100, #BF360C, #1A237E, #5C6BC0, #E65100)", animation: "spin 3s linear infinite", boxShadow: "0 8px 40px rgba(194, 24, 91, 0.3)" }} />
+          <div style={{ position: "absolute", inset: 30, borderRadius: "50%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>🎨</div>
         </div>
-
-        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, color: "#1A1A1A", marginBottom: 8, letterSpacing: "-0.5px", fontStyle: "italic" }}>
-          Analyzing your colors
-        </h2>
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, color: "#1A1A1A", marginBottom: 8, letterSpacing: "-0.5px", fontStyle: "italic" }}>Analyzing your colors</h2>
         <p style={{ fontSize: 13, color: "#888", marginBottom: 32 }}>잠시만 기다려주세요...</p>
-
         <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
           {steps.map((s, i) => (
-            <div key={s} style={{
-              fontSize: 13,
-              color: i === analyzeStep ? "#C2185B" : i < analyzeStep ? "#999" : "#CCC",
-              fontWeight: i === analyzeStep ? 700 : 500,
-              transition: "all 0.3s",
-              opacity: i === analyzeStep ? 1 : 0.6,
-            }}>
+            <div key={s} style={{ fontSize: 13, color: i === analyzeStep ? "#C2185B" : i < analyzeStep ? "#999" : "#CCC", fontWeight: i === analyzeStep ? 700 : 500, transition: "all 0.3s", opacity: i === analyzeStep ? 1 : 0.6 }}>
               {i < analyzeStep ? "✓ " : ""}{s}{i === analyzeStep ? "..." : ""}
             </div>
           ))}
         </div>
-
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
@@ -368,14 +376,11 @@ export default function Home() {
           <p style={{ fontSize: 13, color: "#888", lineHeight: 1.6 }}>자연광에서 메이크업 없이 정면으로</p>
         </div>
 
-        {/* 품질 이슈 안내 */}
         {qualityIssues && (
           <div style={{ background: "#FFF8E1", border: "1px solid #FFD54F", borderRadius: 16, padding: "14px 18px", marginBottom: 16 }}>
             <p style={{ fontSize: 13, fontWeight: 800, color: "#E65100", marginBottom: 8 }}>⚠️ 사진을 다시 찍어주세요</p>
             <ul style={{ listStyle: "none", marginBottom: 8 }}>
-              {qualityIssues.issues.map((iss, i) => (
-                <li key={i} style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>• {iss}</li>
-              ))}
+              {qualityIssues.issues.map((iss, i) => (<li key={i} style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>• {iss}</li>))}
             </ul>
             <p style={{ fontSize: 12, color: "#444", lineHeight: 1.6, fontStyle: "italic" }}>💡 {qualityIssues.advice}</p>
           </div>
@@ -385,53 +390,26 @@ export default function Home() {
           <div style={{ position: "relative", aspectRatio: "4/3", background: "#F8F6F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: cameraOn ? "block" : "none" }} autoPlay muted playsInline />
             <canvas ref={canvasRef} style={{ display: "none" }} />
-            {!cameraOn && !photoB64 && !isUploading && (
-              <div style={{ textAlign: "center", color: "#CCC" }}>
-                <div style={{ fontSize: 40 }}>📷</div>
-                <div style={{ fontSize: 13, marginTop: 8 }}>카메라 또는 사진 업로드</div>
-              </div>
-            )}
-            {isUploading && (
-              <div style={{ textAlign: "center", color: "#C2185B" }}>
-                <div style={{ width: 32, height: 32, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", margin: "0 auto", animation: "spin 0.8s linear infinite" }} />
-                <div style={{ fontSize: 13, marginTop: 12, fontWeight: 600 }}>이미지 처리 중...</div>
-              </div>
-            )}
-            {photoB64 && !cameraOn && !isUploading && (
-              <img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} alt="" />
-            )}
+            {!cameraOn && !photoB64 && !isUploading && (<div style={{ textAlign: "center", color: "#CCC" }}><div style={{ fontSize: 40 }}>📷</div><div style={{ fontSize: 13, marginTop: 8 }}>카메라 또는 사진 업로드</div></div>)}
+            {isUploading && (<div style={{ textAlign: "center", color: "#C2185B" }}><div style={{ width: 32, height: 32, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", margin: "0 auto", animation: "spin 0.8s linear infinite" }} /><div style={{ fontSize: 13, marginTop: 12, fontWeight: 600 }}>이미지 처리 중...</div></div>)}
+            {photoB64 && !cameraOn && !isUploading && (<img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} alt="" />)}
           </div>
           <div style={{ padding: 16, display: "flex", gap: 8 }}>
             {!cameraOn && !photoB64 && <>
               <button onClick={startCam} disabled={isUploading} style={{ flex: 2, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: isUploading ? "not-allowed" : "pointer", opacity: isUploading ? 0.6 : 1 }}>📷 카메라 켜기</button>
               <button onClick={() => fileRef.current?.click()} disabled={isUploading} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: isUploading ? "not-allowed" : "pointer", opacity: isUploading ? 0.6 : 1 }}>📁 업로드</button>
             </>}
-            {cameraOn && (
-              <button onClick={captureSnap} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📸 촬영하기</button>
-            )}
-            {photoB64 && !cameraOn && (
-              <button onClick={() => { setPhotoB64(null); setError(null); startCam(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🔄 다시 찍기</button>
-            )}
+            {cameraOn && (<button onClick={captureSnap} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📸 촬영하기</button>)}
+            {photoB64 && !cameraOn && (<button onClick={() => { setPhotoB64(null); setError(null); startCam(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🔄 다시 찍기</button>)}
           </div>
         </div>
 
         <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} style={{ display: "none" }} />
-        {error && (
-          <div style={{ background: "#FFF0F0", border: "1px solid #FFCCCC", borderRadius: 12, padding: "10px 16px", color: "#C00", fontSize: 13, textAlign: "center", marginBottom: 12 }}>{error}</div>
-        )}
+        {error && (<div style={{ background: "#FFF0F0", border: "1px solid #FFCCCC", borderRadius: 12, padding: "10px 16px", color: "#C00", fontSize: 13, textAlign: "center", marginBottom: 12 }}>{error}</div>)}
 
-        <button
-          onClick={() => setPhase("wrist")}
-          disabled={!photoB64}
-          style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 15, fontWeight: 800, cursor: photoB64 ? "pointer" : "not-allowed", transition: "all 0.2s" }}
-        >
-          다음 단계 → 손목 사진
-        </button>
+        <button onClick={() => setPhase("wrist")} disabled={!photoB64} style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 15, fontWeight: 800, cursor: photoB64 ? "pointer" : "not-allowed", transition: "all 0.2s" }}>다음 단계 → 손목 사진</button>
       </div>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } } @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
   );
 
@@ -446,58 +424,28 @@ export default function Home() {
         </div>
 
         <div style={{ background: "#FFF8E1", border: "1px solid #FFE082", borderRadius: 16, padding: "14px 18px", marginBottom: 16 }}>
-          <p style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>
-            💡 <strong>찍는 방법:</strong> 손목 안쪽이 위로 오게, 자연광에서 정맥이 잘 보이게 찍어주세요.<br />
-            🌿 <strong>초록빛</strong> = 웜톤 / 💙 <strong>파란빛</strong> = 쿨톤
-          </p>
+          <p style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>💡 <strong>찍는 방법:</strong> 손목 안쪽이 위로 오게, 자연광에서 정맥이 잘 보이게 찍어주세요.<br />🌿 <strong>초록빛</strong> = 웜톤 / 💙 <strong>파란빛</strong> = 쿨톤</p>
         </div>
 
         <div style={{ background: "#fff", borderRadius: 24, border: "1px solid #EEE", overflow: "hidden", marginBottom: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.04)" }}>
           <div style={{ position: "relative", aspectRatio: "4/3", background: "#F8F6F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {!wristB64 && !isUploading && (
-              <div style={{ textAlign: "center", color: "#CCC" }}>
-                <div style={{ fontSize: 40 }}>🤚</div>
-                <div style={{ fontSize: 13, marginTop: 8 }}>손목 사진 업로드</div>
-              </div>
-            )}
-            {isUploading && (
-              <div style={{ textAlign: "center", color: "#C2185B" }}>
-                <div style={{ width: 32, height: 32, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", margin: "0 auto", animation: "spin 0.8s linear infinite" }} />
-                <div style={{ fontSize: 13, marginTop: 12, fontWeight: 600 }}>이미지 처리 중...</div>
-              </div>
-            )}
-            {wristB64 && !isUploading && (
-              <img src={`data:image/jpeg;base64,${wristB64}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
-            )}
+            {!wristB64 && !isUploading && (<div style={{ textAlign: "center", color: "#CCC" }}><div style={{ fontSize: 40 }}>🤚</div><div style={{ fontSize: 13, marginTop: 8 }}>손목 사진 업로드</div></div>)}
+            {isUploading && (<div style={{ textAlign: "center", color: "#C2185B" }}><div style={{ width: 32, height: 32, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", margin: "0 auto", animation: "spin 0.8s linear infinite" }} /><div style={{ fontSize: 13, marginTop: 12, fontWeight: 600 }}>이미지 처리 중...</div></div>)}
+            {wristB64 && !isUploading && (<img src={`data:image/jpeg;base64,${wristB64}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />)}
           </div>
           <div style={{ padding: 16, display: "flex", gap: 8 }}>
-            <button onClick={() => wristFileRef.current?.click()} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-              {wristB64 ? "🔄 다시 업로드" : "📁 손목 사진 업로드"}
-            </button>
+            <button onClick={() => wristFileRef.current?.click()} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{wristB64 ? "🔄 다시 업로드" : "📁 손목 사진 업로드"}</button>
           </div>
         </div>
 
         <input ref={wristFileRef} type="file" accept="image/*" onChange={handleWristUpload} style={{ display: "none" }} />
 
         <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => setPhase("capture")}
-            style={{ flex: 1, padding: "16px", borderRadius: 16, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
-          >
-            ← 이전
-          </button>
-          <button
-            onClick={analyzeColor}
-            style={{ flex: 2, padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}
-          >
-            ✨ 분석 시작 {!wristB64 && "(손목 없이)"}
-          </button>
+          <button onClick={() => setPhase("capture")} style={{ flex: 1, padding: "16px", borderRadius: 16, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>← 이전</button>
+          <button onClick={analyzeColor} style={{ flex: 2, padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}>✨ 분석 시작 {!wristB64 && "(손목 없이)"}</button>
         </div>
       </div>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } } @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
   );
 
@@ -518,11 +466,7 @@ export default function Home() {
               )}
             </div>
             <div style={{ fontSize: 12, color: "#777", marginTop: 2 }}>{kit?.summary}</div>
-            {kit?.secondaryGuess && kit.confidence < 80 && (
-              <div style={{ fontSize: 11, color: "#999", marginTop: 4, fontStyle: "italic" }}>
-                💡 {kit.secondaryGuess} 가능성도 있어요
-              </div>
-            )}
+            {kit?.secondaryGuess && kit.confidence < 80 && (<div style={{ fontSize: 11, color: "#999", marginTop: 4, fontStyle: "italic" }}>💡 {kit.secondaryGuess} 가능성도 있어요</div>)}
           </div>
         </div>
       </div>
@@ -535,42 +479,56 @@ export default function Home() {
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
         {activeTab === "palette" && (
           <div>
-            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 4, fontStyle: "italic" }}>Best Colors</p>
-            <p style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.5 }}>이 색들은 내 피부톤을 가장 화사하게 빛나게 해줘요 ✨</p>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
-              {kit?.palette?.best?.filter(isValidHex).map((c: string) => (
-                <ColorSwatch key={c} color={c} onCopy={copyHex} />
-              ))}
+            {/* BEST COLORS */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: 700, color: "#1A1A1A", fontStyle: "italic" }}>Best Colors</p>
+                <span style={{ fontSize: 11, color: acc, fontWeight: 700 }}>✨ 추천</span>
+              </div>
+              <p style={{ fontSize: 12, color: "#888", marginBottom: 16, lineHeight: 1.6 }}>이 색들은 내 피부톤을 가장 화사하게 빛나게 해줘요</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                {kit?.palette?.best?.map((c: any, idx: number) => (
+                  <ColorCard key={idx} color={c} onCopy={copyHex} />
+                ))}
+              </div>
             </div>
-            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 4, fontStyle: "italic" }}>Avoid Colors</p>
-            <p style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.5 }}>{SEASONS[kit?.season]?.avoidDesc || "이 색들은 피부톤과 잘 맞지 않아요"}</p>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {kit?.palette?.avoid?.filter(isValidHex).map((c: string) => (
-                <ColorSwatch key={c} color={c} onCopy={copyHex} dim />
-              ))}
+
+            {/* AVOID COLORS */}
+            <div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: 700, color: "#1A1A1A", fontStyle: "italic" }}>Avoid Colors</p>
+                <span style={{ fontSize: 11, color: "#999", fontWeight: 700 }}>🚫 주의</span>
+              </div>
+              <p style={{ fontSize: 12, color: "#888", marginBottom: 16, lineHeight: 1.6 }}>{SEASONS[kit?.season]?.avoidDesc}</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                {kit?.palette?.avoid?.map((c: any, idx: number) => (
+                  <ColorCard key={idx} color={c} onCopy={copyHex} dim />
+                ))}
+              </div>
             </div>
+
+            <p style={{ fontSize: 11, color: "#BBB", textAlign: "center", marginTop: 20, fontStyle: "italic" }}>💡 카드를 누르면 색상 코드가 복사돼요</p>
           </div>
         )}
 
         {activeTab === "makeup" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
             <div>
-              <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>🫧 Foundation</p>
-              <div style={{ background: "#FAF8F5", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "#444", lineHeight: 1.7 }}>{kit?.makeup?.foundation}</div>
+              <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>🫧 Foundation</p>
+              <div style={{ background: "#FAF8F5", borderRadius: 14, padding: "14px 18px", fontSize: 13, color: "#444", lineHeight: 1.7 }}>{kit?.makeup?.foundation}</div>
             </div>
-            {[{ key: "blush", label: "🌸 Blush" }, { key: "eye", label: "👁 Eye" }, { key: "lip", label: "💋 Lip" }].map(({ key, label }) => (
+
+            {[{ key: "blush", label: "🌸 Blush", desc: "블러셔" }, { key: "eye", label: "👁 Eye", desc: "아이섀도우" }, { key: "lip", label: "💋 Lip", desc: "립" }].map(({ key, label }) => (
               <div key={key}>
-                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>{label}</p>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {kit?.makeup?.[key]?.colors?.filter(isValidHex).map((c: string) => (
-                      <ColorSwatch key={c} color={c} size={32} onCopy={copyHex} />
-                    ))}
-                  </div>
-                  <p style={{ fontSize: 12, color: "#555", lineHeight: 1.7, flex: 1, minWidth: 150 }}>{kit?.makeup?.[key]?.desc}</p>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>{label}</p>
+                <p style={{ fontSize: 12, color: "#666", lineHeight: 1.7, marginBottom: 12 }}>{kit?.makeup?.[key]?.desc}</p>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${kit?.makeup?.[key]?.colors?.length || 2}, 1fr)`, gap: 10 }}>
+                  {kit?.makeup?.[key]?.colors?.map((c: any, idx: number) => (
+                    <ColorCard key={idx} color={c} onCopy={copyHex} />
+                  ))}
                 </div>
               </div>
             ))}
@@ -578,13 +536,13 @@ export default function Home() {
         )}
 
         {activeTab === "fashion" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             {[{ key: "tops", label: "👕 Tops" }, { key: "bottoms", label: "👖 Bottoms" }, { key: "outwear", label: "🧥 Outerwear" }, { key: "avoid", label: "⚠️ Avoid" }].map(({ key, label }) => (
               <div key={key}>
-                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>{label}</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 17, fontWeight: 700, marginBottom: 10, fontStyle: "italic" }}>{label}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {kit?.fashion?.[key]?.map((item: string) => (
-                    <span key={item} style={{ background: key === "avoid" ? "#F5F5F5" : `${acc}12`, color: key === "avoid" ? "#999" : acc, fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 20 }}>{item}</span>
+                    <span key={item} style={{ background: key === "avoid" ? "#F5F5F5" : `${acc}12`, color: key === "avoid" ? "#999" : acc, fontSize: 12, fontWeight: 600, padding: "6px 14px", borderRadius: 20, border: key === "avoid" ? "1px solid #EEE" : `1px solid ${acc}20` }}>{item}</span>
                   ))}
                 </div>
               </div>
@@ -593,29 +551,30 @@ export default function Home() {
         )}
 
         {activeTab === "layering" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             {kit?.layering?.map((look: any, idx: number) => (
-              <div key={idx} style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, border: "1px solid #F0EDE8" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <div>
-                    <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic" }}>{look.name}</p>
-                    <p style={{ fontSize: 11, color: "#999" }}>{look.mood}</p>
-                  </div>
-                  {look.colors?.length > 0 && (
-                    <div style={{ display: "flex" }}>
-                      {look.colors.filter(isValidHex).map((c: string, ci: number) => (
-                        <button key={ci} onClick={() => copyHex(c)} title={c} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: "2px solid #fff", marginLeft: ci > 0 ? -6 : 0, cursor: "pointer", padding: 0 }} />
-                      ))}
-                    </div>
-                  )}
+              <div key={idx} style={{ background: "#FAF8F5", borderRadius: 18, padding: 18, border: "1px solid #F0EDE8" }}>
+                <div style={{ marginBottom: 12 }}>
+                  <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 19, fontWeight: 700, fontStyle: "italic", color: "#1A1A1A" }}>{look.name}</p>
+                  <p style={{ fontSize: 12, color: "#999", marginTop: 2 }}>{look.mood}</p>
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+
+                {/* 컬러 카드들 */}
+                {look.colors?.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(look.colors.length, 3)}, 1fr)`, gap: 8, marginBottom: 14 }}>
+                    {look.colors.map((c: any, ci: number) => (
+                      <ColorCard key={ci} color={c} onCopy={copyHex} />
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
                   {look.items?.map((item: string) => (
-                    <span key={item} style={{ background: `${acc}12`, color: acc, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20 }}>{item}</span>
+                    <span key={item} style={{ background: `${acc}15`, color: acc, fontSize: 12, fontWeight: 600, padding: "4px 12px", borderRadius: 20 }}>{item}</span>
                   ))}
                 </div>
-                <div style={{ borderLeft: `3px solid ${acc}`, paddingLeft: 10 }}>
-                  <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6 }}>💡 {look.tip}</p>
+                <div style={{ borderLeft: `3px solid ${acc}`, paddingLeft: 12, background: "#fff", borderRadius: "0 8px 8px 0", padding: "10px 14px" }}>
+                  <p style={{ fontSize: 12, color: "#555", lineHeight: 1.7 }}>💡 {look.tip}</p>
                 </div>
               </div>
             ))}
@@ -641,9 +600,7 @@ export default function Home() {
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
-            {m.role === "ai" && (
-              <div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🎨</div>
-            )}
+            {m.role === "ai" && (<div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🎨</div>)}
             <div style={{ maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: m.role === "user" ? `${acc}18` : "#fff", border: m.role === "user" ? `1px solid ${acc}30` : "1px solid #EEE", color: m.role === "user" ? acc : "#333", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "keep-all" }}>{m.text}</div>
           </div>
         ))}
@@ -665,15 +622,7 @@ export default function Home() {
       </div>
 
       <div style={{ padding: "10px 16px", borderTop: "1px solid #E8E4DE", display: "flex", gap: 8, background: "#fff" }}>
-        <input
-          value={chatInput}
-          onChange={e => setChatInput(e.target.value)}
-          onCompositionStart={() => { isComposingRef.current = true; }}
-          onCompositionEnd={() => { isComposingRef.current = false; }}
-          onKeyDown={handleKeyDown}
-          placeholder="궁금한 점을 물어보세요..."
-          style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "9px 16px", color: "#333", fontSize: 13, outline: "none" }}
-        />
+        <input value={chatInput} onChange={e => setChatInput(e.target.value)} onCompositionStart={() => { isComposingRef.current = true; }} onCompositionEnd={() => { isComposingRef.current = false; }} onKeyDown={handleKeyDown} placeholder="궁금한 점을 물어보세요..." style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "9px 16px", color: "#333", fontSize: 13, outline: "none" }} />
         <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading} style={{ width: 38, height: 38, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 15 }}>↑</button>
       </div>
     </div>
@@ -696,16 +645,10 @@ export default function Home() {
       {isMobile ? (
         <>
           <div style={{ display: "flex", borderBottom: "1px solid #EEE", background: "#fff", flexShrink: 0 }}>
-            <button onClick={() => setMobileView("kit")} style={{ flex: 1, padding: "12px", border: "none", background: "none", fontSize: 13, fontWeight: mobileView === "kit" ? 800 : 500, color: mobileView === "kit" ? acc : "#999", borderBottom: mobileView === "kit" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
-              🎨 내 키트
-            </button>
-            <button onClick={() => setMobileView("chat")} style={{ flex: 1, padding: "12px", border: "none", background: "none", fontSize: 13, fontWeight: mobileView === "chat" ? 800 : 500, color: mobileView === "chat" ? acc : "#999", borderBottom: mobileView === "chat" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
-              🛍️ 쇼핑 도움
-            </button>
+            <button onClick={() => setMobileView("kit")} style={{ flex: 1, padding: "12px", border: "none", background: "none", fontSize: 13, fontWeight: mobileView === "kit" ? 800 : 500, color: mobileView === "kit" ? acc : "#999", borderBottom: mobileView === "kit" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>🎨 내 키트</button>
+            <button onClick={() => setMobileView("chat")} style={{ flex: 1, padding: "12px", border: "none", background: "none", fontSize: 13, fontWeight: mobileView === "chat" ? 800 : 500, color: mobileView === "chat" ? acc : "#999", borderBottom: mobileView === "chat" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>🛍️ 쇼핑 도움</button>
           </div>
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            {mobileView === "kit" ? KitContent : ShopContent}
-          </div>
+          <div style={{ flex: 1, overflow: "hidden" }}>{mobileView === "kit" ? KitContent : ShopContent}</div>
         </>
       ) : (
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -714,17 +657,7 @@ export default function Home() {
         </div>
       )}
 
-      {toast && (
-        <div style={{
-          position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
-          background: "#1A1A1A", color: "#fff", padding: "10px 20px", borderRadius: 24,
-          fontSize: 13, fontWeight: 600, zIndex: 1000,
-          animation: "toastIn 0.3s ease-out",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
-        }}>
-          {toast}
-        </div>
-      )}
+      {toast && (<div style={{ position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", background: "#1A1A1A", color: "#fff", padding: "10px 20px", borderRadius: 24, fontSize: 13, fontWeight: 600, zIndex: 1000, animation: "toastIn 0.3s ease-out", boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>{toast}</div>)}
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600;1,700&display=swap');
