@@ -70,6 +70,22 @@ type SavedOutfit = { id: string; title: string; mood: string; itemIds: string[];
 
 const makeOutfitSignature = (title: string, itemIds: string[]) => `${title}::${[...itemIds].sort().join(",")}`;
 
+// 옷장에서 비슷한 옷 찾기 (영감 분석 결과 기반)
+const findSimilarClothes = (clothes: ClothItem[], inspirationResult: any): ClothItem[] => {
+  if (!inspirationResult || inspirationResult.type !== "fashion" || !inspirationResult.details) return [];
+  const details = inspirationResult.details;
+  const keywords: string[] = [];
+  if (details.top) keywords.push(...details.top.split(" "));
+  if (details.bottom) keywords.push(...details.bottom.split(" "));
+  
+  const matches = clothes.filter(c => {
+    const searchText = `${c.name} ${c.colorName} ${c.type} ${c.mood}`.toLowerCase();
+    return keywords.some(kw => kw.length >= 2 && searchText.includes(kw.toLowerCase()));
+  });
+  
+  return matches.slice(0, 3);
+};
+
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -81,6 +97,7 @@ export default function Home() {
   const inspirationFileRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const outfitResultRef = useRef<HTMLDivElement>(null);
+  const inspirationResultRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
 
   const [phase, setPhase] = useState<Phase>("guide");
@@ -122,7 +139,6 @@ export default function Home() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
 
-  // 영감 분석
   const [inspirationImg, setInspirationImg] = useState<string | null>(null);
   const [inspirationResult, setInspirationResult] = useState<any>(null);
   const [inspirationLoading, setInspirationLoading] = useState(false);
@@ -359,10 +375,10 @@ export default function Home() {
 
   const removeSavedOutfit = (id: string) => setSavedOutfits(p => p.filter(o => o.id !== id));
 
-  // 영감 분석 (핀터레스트 등)
+  // 영감 분석 (이전 결과 유지하면서 새 분석)
   const analyzeInspiration = async (b64: string) => {
     setInspirationLoading(true);
-    setInspirationResult(null);
+    // 이전 결과 유지하면서 분석
     try {
       const res = await fetch("/api/inspiration", {
         method: "POST",
@@ -372,6 +388,13 @@ export default function Home() {
       const data = await res.json();
       if (data.analysis) {
         setInspirationResult(data.analysis);
+        // 채팅 컨텍스트에 영감 분석 결과 자동 추가
+        const summaryText = data.analysis.type === "makeup"
+          ? `사용자가 영감으로 올린 메이크업 스타일: ${data.analysis.mood}. 립: ${data.analysis.details?.lip?.name || ""}, 블러셔: ${data.analysis.details?.blush?.name || ""}, 아이: ${data.analysis.details?.eye?.name || ""}. ${kit ? `매칭점수: ${data.analysis.matchScore}점` : ""}`
+          : `사용자가 영감으로 올린 코디: ${data.analysis.mood}. 상의: ${data.analysis.details?.top || ""}, 하의: ${data.analysis.details?.bottom || ""}, 신발: ${data.analysis.details?.shoes || ""}. ${kit ? `매칭점수: ${data.analysis.matchScore}점` : ""}`;
+        setChatHistory(p => [...p, { role: "user", content: `[영감 분석 완료] ${summaryText}` }, { role: "assistant", content: "영감 분석 결과를 봤어요. 이 스타일에 대해 궁금한 점 있으시면 물어보세요!" }]);
+        // 자동 스크롤
+        setTimeout(() => inspirationResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
       } else {
         setToast("분석 실패 😢");
         setTimeout(() => setToast(null), 2000);
@@ -492,6 +515,9 @@ export default function Home() {
   });
 
   const findClothById = (id: string) => clothes.find(c => c.id === id);
+
+  // 영감 분석 결과 → 옷장 매칭
+  const similarClothes = inspirationResult ? findSimilarClothes(clothes, inspirationResult) : [];
 
   const stats = {
     total: clothes.length,
@@ -615,7 +641,7 @@ export default function Home() {
     </div>
   );
 
-  // ── KIT CONTENT ──
+  // KIT CONTENT (생략 — 동일)
   const KitContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
@@ -695,7 +721,6 @@ export default function Home() {
     </div>
   );
 
-  // ── WARDROBE CONTENT ──
   const WardrobeContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEE", background: "#FAFAF7" }}>
@@ -942,7 +967,7 @@ export default function Home() {
     </div>
   );
 
-  // ── SHOP CONTENT (영감 분석 추가) ──
+  // SHOP CONTENT (영감 분석 + 옷장 매칭 + 키트 안내)
   const ShopContent = (
     <div style={{ display: "flex", flexDirection: "column", background: "#FAFAF7", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E4DE", background: "#fff" }}>
@@ -955,22 +980,20 @@ export default function Home() {
           <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>상품 이미지를 올리면<br />어울림을 분석해요</p>
         </div>
 
-        {/* 영감 분석 (핀터레스트 등) */}
         <div style={{ borderTop: "1px solid #EEE", paddingTop: 10 }}>
-          <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>📌 영감 분석 — 핀터레스트 캡처 따라하기</p>
+          <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>📌 영감 분석 — 따라하고 싶은 메이크업/코디 사진 올리기</p>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <div onClick={() => inspirationFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: inspirationImg ? "none" : "2px dashed #C2185B60", background: "#FFF0F4", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {inspirationImg ? <img src={`data:image/jpeg;base64,${inspirationImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#C2185B" }}>📌</span>}
             </div>
             <input ref={inspirationFileRef} type="file" accept="image/*" onChange={handleInspirationUpload} style={{ display: "none" }} />
-            <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>메이크업/코디 사진 올리면<br />AI가 분석해드려요 ✨</p>
+            <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>핀터레스트·인스타 등에서<br />캡처한 사진 올려보세요 ✨</p>
           </div>
         </div>
       </div>
 
-      {/* 영감 분석 결과 */}
       {(inspirationLoading || inspirationResult) && (
-        <div style={{ padding: "14px 16px", borderBottom: "1px solid #EEE", background: "#FFF8FA" }}>
+        <div ref={inspirationResultRef} style={{ padding: "14px 16px", borderBottom: "1px solid #EEE", background: "#FFF8FA" }}>
           {inspirationLoading && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0" }}>
               <div style={{ width: 24, height: 24, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
@@ -990,7 +1013,8 @@ export default function Home() {
                 <p style={{ fontSize: 13, fontWeight: 800, color: "#333", marginBottom: 4 }}>{inspirationResult.mood}</p>
                 <p style={{ fontSize: 10, color: "#999", fontStyle: "italic" }}>{inspirationResult.moodEn}</p>
 
-                {kit && inspirationResult.matchScore && (
+                {/* 키트 있으면 매칭 점수, 없으면 안내 */}
+                {kit && inspirationResult.matchScore ? (
                   <div style={{ marginTop: 10, padding: "10px 12px", background: inspirationResult.matchScore >= 80 ? "#E8F5E9" : inspirationResult.matchScore >= 60 ? "#FFF8E1" : "#FFEBEE", borderRadius: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: "#333" }}>당신({kit.season})과의 매칭</span>
@@ -999,6 +1023,10 @@ export default function Home() {
                       </span>
                     </div>
                     <p style={{ fontSize: 11, color: "#555", lineHeight: 1.5 }}>{inspirationResult.matchComment}</p>
+                  </div>
+                ) : !kit && (
+                  <div style={{ marginTop: 10, padding: "10px 12px", background: "#F0EDE8", borderRadius: 8, border: "1px dashed #BBB" }}>
+                    <p style={{ fontSize: 11, color: "#666", lineHeight: 1.5 }}>💡 퍼스널 컬러 분석을 받으면<br /><strong>매칭 점수</strong>와 <strong>맞춤 추천</strong>을 받을 수 있어요!</p>
                   </div>
                 )}
               </div>
@@ -1016,7 +1044,7 @@ export default function Home() {
                       <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                         <span style={{ fontSize: 14 }}>{icon}</span>
                         {item.color && isValidHex(item.color) && (
-                          <button onClick={() => copyHex(item.color)} style={{ width: 20, height: 20, borderRadius: "50%", background: item.color, border: "2px solid #fff", boxShadow: `0 0 0 1px ${item.color}`, cursor: "pointer" }} />
+                          <button onClick={() => copyHex(item.color)} style={{ width: 28, height: 28, borderRadius: "50%", background: item.color, border: "2px solid #fff", boxShadow: `0 0 0 1px ${item.color}`, cursor: "pointer" }} />
                         )}
                         <div style={{ flex: 1 }}>
                           <p style={{ fontSize: 11, fontWeight: 700, color: "#333" }}>{label}: {item.name}</p>
@@ -1055,6 +1083,21 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* 옷장 매칭 (코디일 때만) */}
+              {inspirationResult.type === "fashion" && similarClothes.length > 0 && (
+                <div style={{ background: `${acc}10`, borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: acc, marginBottom: 8 }}>👗 옷장에 비슷한 옷이 {similarClothes.length}벌 있어요!</p>
+                  <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+                    {similarClothes.map((c) => (
+                      <div key={c.id} onClick={() => setZoomImage(c.image)} style={{ flexShrink: 0, cursor: "pointer", textAlign: "center" }}>
+                        <img src={`data:image/jpeg;base64,${c.image}`} style={{ width: 60, height: 80, borderRadius: 8, objectFit: "cover", border: "1px solid #EEE" }} alt={c.name} />
+                        <p style={{ fontSize: 9, color: "#666", marginTop: 4, maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
