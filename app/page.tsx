@@ -36,7 +36,6 @@ const resizeCanvas = (sourceCanvas: HTMLCanvasElement, maxWidth = 800): string =
   return canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
 };
 
-// 색상 스와치 컴포넌트 (클릭 시 hex 복사)
 function ColorSwatch({ color, size = 40, onCopy, dim = false }: { color: string; size?: number; onCopy: (c: string) => void; dim?: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -81,8 +80,8 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileView, setMobileView] = useState<"kit" | "chat">("kit");
-  const [analyzeStep, setAnalyzeStep] = useState(0); // 분석 진행 단계
-  const [toast, setToast] = useState<string | null>(null); // 토스트 알림
+  const [analyzeStep, setAnalyzeStep] = useState(0);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -91,7 +90,6 @@ export default function Home() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // 분석 중 단계별 메시지 자동 진행
   useEffect(() => {
     if (!isAnalyzing) { setAnalyzeStep(0); return; }
     const interval = setInterval(() => {
@@ -100,7 +98,6 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
-  // hex 복사 + 토스트
   const copyHex = (hex: string) => {
     navigator.clipboard?.writeText(hex);
     setToast(`${hex} 복사됨 ✓`);
@@ -237,12 +234,10 @@ export default function Home() {
 
   const acc = kit ? (SEASONS[kit.season]?.accent || "#C2185B") : "#C2185B";
 
-  // ── ANALYZING SCREEN (별도) ──
   if (phase === "analyzing") {
     const steps = ["📸 사진 분석 중", "🎨 피부톤 측정 중", "✨ 컬러 매칭 중", "💄 키트 생성 중"];
     return (
       <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #FFF0F4 0%, #F5F0FF 50%, #FFF8F0 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
-        {/* 회전하는 컬러 휠 */}
         <div style={{ width: 180, height: 180, position: "relative", marginBottom: 32 }}>
           <div style={{
             width: "100%", height: "100%", borderRadius: "50%",
@@ -280,7 +275,6 @@ export default function Home() {
     );
   }
 
-  // ── CAPTURE PHASE ──
   if (phase === "capture") return (
     <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
       <div style={{ width: "100%", maxWidth: 440, animation: "fadeIn 0.6s ease-out" }}>
@@ -349,15 +343,27 @@ export default function Home() {
     </div>
   );
 
-  // ── KIT PHASE ──
   const KitContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", animation: "fadeIn 0.5s ease-out" }}>
       <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {photoB64 && <img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", transform: "scaleX(-1)", border: `2px solid ${acc}` }} alt="" />}
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 900, color: acc }}>{SEASONS[kit?.season]?.label}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: acc }}>{SEASONS[kit?.season]?.label}</div>
+              {kit?.confidence && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#fff", borderRadius: 12, padding: "2px 8px", border: `1px solid ${acc}30` }}>
+                  <span style={{ fontSize: 9, color: "#888" }}>정확도</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: acc }}>{kit.confidence}%</span>
+                </div>
+              )}
+            </div>
             <div style={{ fontSize: 12, color: "#777", marginTop: 2 }}>{kit?.summary}</div>
+            {kit?.secondaryGuess && kit.confidence < 80 && (
+              <div style={{ fontSize: 11, color: "#999", marginTop: 4, fontStyle: "italic" }}>
+                💡 {kit.secondaryGuess} 가능성도 있어요
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -549,7 +555,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* 토스트 알림 */}
       {toast && (
         <div style={{
           position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",

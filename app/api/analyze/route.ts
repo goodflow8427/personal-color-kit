@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 1500,
+      temperature: 0, // 일관성 있는 결과를 위해 0으로 고정 (창의성 OFF)
       messages: [
         {
           role: "user",
@@ -40,7 +41,6 @@ export async function POST(req: NextRequest) {
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("");
 
-    // JSON 추출 — AI가 앞뒤에 텍스트를 붙여도 안전하게 파싱
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("JSON을 찾을 수 없어요");
     const kit = JSON.parse(jsonMatch[0]);
