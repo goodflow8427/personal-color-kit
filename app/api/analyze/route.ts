@@ -39,8 +39,11 @@ export async function POST(req: NextRequest) {
     const raw = response.content
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("");
-    const cleaned = raw.replace(/```json|```/g, "").trim();
-    const kit = JSON.parse(cleaned);
+
+    // JSON 추출 — AI가 앞뒤에 텍스트를 붙여도 안전하게 파싱
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("JSON을 찾을 수 없어요");
+    const kit = JSON.parse(jsonMatch[0]);
 
     return NextResponse.json({ kit });
   } catch (error) {
