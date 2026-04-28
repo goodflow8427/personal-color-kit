@@ -12,7 +12,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "얼굴 사진이 없어요." }, { status: 400 });
     }
 
-    // 이미지 컨텐츠 배열 만들기
     const content: any[] = [
       {
         type: "image",
@@ -24,7 +23,6 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    // 손목 사진이 있으면 추가
     if (wristImage) {
       content.push({
         type: "image",
@@ -47,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-5",
-      max_tokens: 1500,
+      max_tokens: 2500,
       temperature: 0,
       messages: [{ role: "user", content }],
     });
@@ -58,9 +56,24 @@ export async function POST(req: NextRequest) {
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("JSON을 찾을 수 없어요");
-    const result = JSON.parse(jsonMatch[0]);
 
-    // 사진 품질 체크 실패 시
+    let result;
+    try {
+      result = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      // JSON 파싱 실패 시 자동 복구 시도
+      console.error("JSON 파싱 실패, 복구 시도:", parseErr);
+      let cleaned = jsonMatch[0]
+        .replace(/,(\s*[}\]])/g, "$1") // 끝에 콤마 제거
+        .replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":') // 키에 따옴표 추가
+        .replace(/'/g, '"'); // 작은따옴표 → 큰따옴표
+      try {
+        result = JSON.parse(cleaned);
+      } catch {
+        throw new Error("AI 응답을 처리할 수 없어요. 다시 시도해주세요.");
+      }
+    }
+
     if (result.quality_check && !result.quality_check.ok) {
       return NextResponse.json({
         qualityFailed: true,
