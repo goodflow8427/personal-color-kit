@@ -12,6 +12,14 @@ const SEASONS: Record<string, { bg: string; accent: string; label: string; avoid
 const CATEGORIES = ["상의", "하의", "아우터", "원피스", "신발", "가방", "액세서리"];
 const MOODS = ["캐주얼", "포멀", "스트릿", "러블리", "미니멀", "빈티지", "스포티"];
 
+const ANALYZING_MESSAGES = [
+  "✨ 당신만의 컬러를 찾고 있어요",
+  "🎨 피부톤을 섬세하게 분석 중",
+  "🌸 어울리는 색을 매칭하는 중",
+  "💄 맞춤 키트를 만들고 있어요",
+  "💕 거의 다 됐어요!",
+];
+
 const isValidHex = (color: string) => /^#[0-9A-F]{6}$/i.test(color);
 
 const isLightColor = (hex: string) => {
@@ -70,7 +78,6 @@ type SavedOutfit = { id: string; title: string; mood: string; itemIds: string[];
 
 const makeOutfitSignature = (title: string, itemIds: string[]) => `${title}::${[...itemIds].sort().join(",")}`;
 
-// 옷장에서 비슷한 옷 찾기 (영감 분석 결과 기반)
 const findSimilarClothes = (clothes: ClothItem[], inspirationResult: any): ClothItem[] => {
   if (!inspirationResult || inspirationResult.type !== "fashion" || !inspirationResult.details) return [];
   const details = inspirationResult.details;
@@ -143,6 +150,11 @@ export default function Home() {
   const [inspirationResult, setInspirationResult] = useState<any>(null);
   const [inspirationLoading, setInspirationLoading] = useState(false);
 
+  // 첫 방문 가이드
+  const [showFirstGuide, setShowFirstGuide] = useState(false);
+  // 결과 카드 공유
+  const [showShareCard, setShowShareCard] = useState(false);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem("colorkit_clothes");
@@ -153,6 +165,12 @@ export default function Home() {
       if (savedWeather) {
         const { weather: w, time } = JSON.parse(savedWeather);
         if (Date.now() - time < 30 * 60 * 1000) setWeather(w);
+      }
+      // 첫 방문자 체크
+      const visited = localStorage.getItem("colorkit_visited");
+      if (!visited) {
+        setShowFirstGuide(true);
+        localStorage.setItem("colorkit_visited", "true");
       }
     } catch {}
     setClothesLoaded(true);
@@ -178,7 +196,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAnalyzing) { setAnalyzeStep(0); return; }
-    const interval = setInterval(() => { setAnalyzeStep(s => (s + 1) % 4); }, 1500);
+    const interval = setInterval(() => { setAnalyzeStep(s => (s + 1) % ANALYZING_MESSAGES.length); }, 1800);
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
@@ -375,10 +393,8 @@ export default function Home() {
 
   const removeSavedOutfit = (id: string) => setSavedOutfits(p => p.filter(o => o.id !== id));
 
-  // 영감 분석 (이전 결과 유지하면서 새 분석)
   const analyzeInspiration = async (b64: string) => {
     setInspirationLoading(true);
-    // 이전 결과 유지하면서 분석
     try {
       const res = await fetch("/api/inspiration", {
         method: "POST",
@@ -388,12 +404,10 @@ export default function Home() {
       const data = await res.json();
       if (data.analysis) {
         setInspirationResult(data.analysis);
-        // 채팅 컨텍스트에 영감 분석 결과 자동 추가
         const summaryText = data.analysis.type === "makeup"
           ? `사용자가 영감으로 올린 메이크업 스타일: ${data.analysis.mood}. 립: ${data.analysis.details?.lip?.name || ""}, 블러셔: ${data.analysis.details?.blush?.name || ""}, 아이: ${data.analysis.details?.eye?.name || ""}. ${kit ? `매칭점수: ${data.analysis.matchScore}점` : ""}`
           : `사용자가 영감으로 올린 코디: ${data.analysis.mood}. 상의: ${data.analysis.details?.top || ""}, 하의: ${data.analysis.details?.bottom || ""}, 신발: ${data.analysis.details?.shoes || ""}. ${kit ? `매칭점수: ${data.analysis.matchScore}점` : ""}`;
         setChatHistory(p => [...p, { role: "user", content: `[영감 분석 완료] ${summaryText}` }, { role: "assistant", content: "영감 분석 결과를 봤어요. 이 스타일에 대해 궁금한 점 있으시면 물어보세요!" }]);
-        // 자동 스크롤
         setTimeout(() => inspirationResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
       } else {
         setToast("분석 실패 😢");
@@ -416,13 +430,28 @@ export default function Home() {
   };
 
   const shareOutfit = async (outfit: any, items: ClothItem[]) => {
-    const text = `🎨 ${outfit.title}\n${outfit.mood}\n\n구성: ${items.map(i => i.name).join(", ")}\n\n${outfit.reason}\n\n💡 ${outfit.tip}\n\n🌐 Personal Color Kit에서 추천받았어요!`;
+    const text = `🎨 ${outfit.title}\n${outfit.mood}\n\n구성: ${items.map(i => i.name).join(", ")}\n\n${outfit.reason}\n\n💡 ${outfit.tip}\n\n🌐 Personal Color Kit에서 추천받았어요!\nhttps://personal-color-kit.vercel.app`;
     try {
       if (navigator.share) {
         await navigator.share({ title: outfit.title, text });
       } else {
         await navigator.clipboard.writeText(text);
         setToast("📋 코디가 복사됐어요!");
+        setTimeout(() => setToast(null), 1800);
+      }
+    } catch {}
+  };
+
+  // 퍼스널 컬러 결과 공유
+  const shareKitResult = async () => {
+    if (!kit) return;
+    const text = `🎨 내 퍼스널 컬러: ${kit.season} ${SEASONS[kit.season]?.label}\n\n${kit.summary || ""}\n\n✨ 추천 색상: ${kit.palette?.best?.slice(0, 3).map((c: any) => c.name || c.hex).join(", ")}\n\n🌐 무료로 진단받기:\nhttps://personal-color-kit.vercel.app`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${kit.season} - 내 퍼스널 컬러`, text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        setToast("📋 결과가 복사됐어요!");
         setTimeout(() => setToast(null), 1800);
       }
     } catch {}
@@ -449,6 +478,8 @@ export default function Home() {
         { role: "user", content: `내 퍼스널 컬러: ${JSON.stringify(data.kit)}` },
         { role: "assistant", content: `${data.kit.season} 분석 완료! 도움 드릴게요 💕` },
       ]);
+      // 분석 완료 후 자동으로 공유 카드 보여주기
+      setTimeout(() => setShowShareCard(true), 800);
     } catch { setError("분석 오류가 발생했어요. 다시 시도해주세요."); setPhase("capture"); }
     setIsAnalyzing(false);
   };
@@ -515,8 +546,6 @@ export default function Home() {
   });
 
   const findClothById = (id: string) => clothes.find(c => c.id === id);
-
-  // 영감 분석 결과 → 옷장 매칭
   const similarClothes = inspirationResult ? findSimilarClothes(clothes, inspirationResult) : [];
 
   const stats = {
@@ -527,51 +556,80 @@ export default function Home() {
   };
 
   if (phase === "guide") return (
-    <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 480, animation: "fadeIn 0.6s ease-out" }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>🎨</div>
-          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 14, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 8 }}>BEFORE WE START</p>
-          <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: "-1px", marginBottom: 10 }}>정확한 진단을 위해</h1>
-          <p style={{ fontSize: 13, color: "#888", lineHeight: 1.7 }}>아래 가이드를 확인하면<br />훨씬 정확한 결과를 얻을 수 있어요</p>
+    <>
+      <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 480, animation: "fadeIn 0.6s ease-out" }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div style={{ fontSize: 48, marginBottom: 8 }}>🎨</div>
+            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 14, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 8 }}>BEFORE WE START</p>
+            <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: "-1px", marginBottom: 10 }}>정확한 진단을 위해</h1>
+            <p style={{ fontSize: 13, color: "#888", lineHeight: 1.7 }}>아래 가이드를 확인하면<br />훨씬 정확한 결과를 얻을 수 있어요</p>
+          </div>
+          <div style={{ background: "#fff", borderRadius: 20, padding: "20px 24px", border: "1px solid #EEE", boxShadow: "0 4px 24px rgba(0,0,0,0.04)", marginBottom: 16 }}>
+            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic", marginBottom: 14 }}>📸 사진 촬영 가이드</p>
+            <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                { icon: "☀️", title: "자연광에서", desc: "오전 10시 ~ 오후 3시 햇빛이 가장 좋아요" },
+                { icon: "💄", title: "메이크업 NO", desc: "민낯이거나 가벼운 베이스만" },
+                { icon: "👕", title: "흰색 옷 / 배경", desc: "다른 색이 피부에 비치지 않도록" },
+                { icon: "👀", title: "정면, 가까이", desc: "얼굴이 화면 절반 이상 차지하게" },
+                { icon: "🤚", title: "손목 사진도 (선택)", desc: "정맥 색이 진단에 큰 도움이 돼요" },
+              ].map(item => (
+                <li key={item.title} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 22 }}>{item.icon}</span>
+                  <div><p style={{ fontSize: 13, fontWeight: 700 }}>{item.title}</p><p style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginTop: 2 }}>{item.desc}</p></div>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button onClick={() => setPhase("capture")} style={{ width: "100%", padding: "18px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}>✨ 시작하기</button>
         </div>
-        <div style={{ background: "#fff", borderRadius: 20, padding: "20px 24px", border: "1px solid #EEE", boxShadow: "0 4px 24px rgba(0,0,0,0.04)", marginBottom: 16 }}>
-          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic", marginBottom: 14 }}>📸 사진 촬영 가이드</p>
-          <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
-            {[
-              { icon: "☀️", title: "자연광에서", desc: "오전 10시 ~ 오후 3시 햇빛이 가장 좋아요" },
-              { icon: "💄", title: "메이크업 NO", desc: "민낯이거나 가벼운 베이스만" },
-              { icon: "👕", title: "흰색 옷 / 배경", desc: "다른 색이 피부에 비치지 않도록" },
-              { icon: "👀", title: "정면, 가까이", desc: "얼굴이 화면 절반 이상 차지하게" },
-              { icon: "🤚", title: "손목 사진도 (선택)", desc: "정맥 색이 진단에 큰 도움이 돼요" },
-            ].map(item => (
-              <li key={item.title} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <span style={{ fontSize: 22 }}>{item.icon}</span>
-                <div><p style={{ fontSize: 13, fontWeight: 700 }}>{item.title}</p><p style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginTop: 2 }}>{item.desc}</p></div>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <button onClick={() => setPhase("capture")} style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}>✨ 시작하기</button>
+        <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       </div>
-      <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-    </div>
+
+      {/* 첫 방문 가이드 모달 */}
+      {showFirstGuide && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 5000, padding: 20, animation: "fadeIn 0.3s" }}>
+          <div style={{ background: "#fff", borderRadius: 24, padding: "32px 24px", maxWidth: 380, width: "100%", textAlign: "center" }}>
+            <div style={{ fontSize: 50, marginBottom: 12 }}>🎨</div>
+            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 12, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 6 }}>WELCOME</p>
+            <h2 style={{ fontSize: 22, fontWeight: 900, marginBottom: 16, letterSpacing: "-0.5px" }}>3단계로 끝나요!</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24, textAlign: "left" }}>
+              {[
+                { icon: "📸", title: "1. 셀카 한 장", desc: "민낯·자연광이 베스트" },
+                { icon: "✨", title: "2. AI 분석", desc: "30초면 끝나요" },
+                { icon: "💄", title: "3. 맞춤 키트 받기", desc: "메이크업·옷·코디까지" },
+              ].map((step, i) => (
+                <div key={i} style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", background: "#FAFAF7", borderRadius: 12 }}>
+                  <span style={{ fontSize: 24 }}>{step.icon}</span>
+                  <div><p style={{ fontSize: 13, fontWeight: 700 }}>{step.title}</p><p style={{ fontSize: 11, color: "#888" }}>{step.desc}</p></div>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 11, color: "#999", marginBottom: 20 }}>완전 무료 · 회원가입 없음 · 30초</p>
+            <button onClick={() => setShowFirstGuide(false)} style={{ width: "100%", padding: "16px", borderRadius: 14, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>시작하기 →</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 
   if (phase === "analyzing") {
-    const steps = ["📸 사진 분석 중", "🎨 피부톤 측정 중", "✨ 컬러 매칭 중", "💄 키트 생성 중"];
     return (
       <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #FFF0F4 0%, #F5F0FF 50%, #FFF8F0 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
-        <div style={{ width: 180, height: 180, position: "relative", marginBottom: 32 }}>
+        <div style={{ width: 200, height: 200, position: "relative", marginBottom: 32 }}>
           <div style={{ width: "100%", height: "100%", borderRadius: "50%", background: "conic-gradient(from 0deg, #E65100, #BF360C, #1A237E, #5C6BC0, #E65100)", animation: "spin 3s linear infinite", boxShadow: "0 8px 40px rgba(194, 24, 91, 0.3)" }} />
-          <div style={{ position: "absolute", inset: 30, borderRadius: "50%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>🎨</div>
+          <div style={{ position: "absolute", inset: 32, borderRadius: "50%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>🎨</div>
         </div>
-        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>Analyzing your colors</h2>
-        <p style={{ fontSize: 13, color: "#888", marginBottom: 32 }}>잠시만 기다려주세요...</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
-          {steps.map((s, i) => (<div key={s} style={{ fontSize: 13, color: i === analyzeStep ? "#C2185B" : i < analyzeStep ? "#999" : "#CCC", fontWeight: i === analyzeStep ? 700 : 500 }}>{i < analyzeStep ? "✓ " : ""}{s}{i === analyzeStep ? "..." : ""}</div>))}
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, marginBottom: 12, fontStyle: "italic" }}>Analyzing your colors</h2>
+        <p style={{ fontSize: 15, color: acc, fontWeight: 700, marginBottom: 8, minHeight: 24, textAlign: "center", animation: "fadeIn 0.4s" }} key={analyzeStep}>
+          {ANALYZING_MESSAGES[analyzeStep]}
+        </p>
+        <p style={{ fontSize: 12, color: "#999" }}>잠시만 기다려주세요... ({Math.min((analyzeStep + 1) * 20, 100)}%)</p>
+        <div style={{ width: 200, height: 4, background: "#EEE", borderRadius: 2, marginTop: 16, overflow: "hidden" }}>
+          <div style={{ width: `${Math.min((analyzeStep + 1) * 20, 100)}%`, height: "100%", background: "linear-gradient(90deg, #C2185B, #880E4F)", borderRadius: 2, transition: "width 1.8s ease" }} />
         </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } } @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }`}</style>
       </div>
     );
   }
@@ -595,16 +653,16 @@ export default function Home() {
           </div>
           <div style={{ padding: 16, display: "flex", gap: 8 }}>
             {!cameraOn && !photoB64 && <>
-              <button onClick={startCam} style={{ flex: 2, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📷 카메라 켜기</button>
-              <button onClick={() => fileRef.current?.click()} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📁 업로드</button>
+              <button onClick={startCam} style={{ flex: 2, padding: "14px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📷 카메라 켜기</button>
+              <button onClick={() => fileRef.current?.click()} style={{ flex: 1, padding: "14px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📁 업로드</button>
             </>}
-            {cameraOn && (<button onClick={captureSnap} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📸 촬영하기</button>)}
-            {photoB64 && !cameraOn && (<button onClick={() => { setPhotoB64(null); setError(null); startCam(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🔄 다시 찍기</button>)}
+            {cameraOn && (<button onClick={captureSnap} style={{ flex: 1, padding: "14px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📸 촬영하기</button>)}
+            {photoB64 && !cameraOn && (<button onClick={() => { setPhotoB64(null); setError(null); startCam(); }} style={{ flex: 1, padding: "14px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🔄 다시 찍기</button>)}
           </div>
         </div>
         <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} style={{ display: "none" }} />
         {error && (<div style={{ background: "#FFF0F0", border: "1px solid #FFCCCC", borderRadius: 12, padding: "10px 16px", color: "#C00", fontSize: 13, textAlign: "center", marginBottom: 12 }}>{error}</div>)}
-        <button onClick={() => setPhase("wrist")} disabled={!photoB64} style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 15, fontWeight: 800, cursor: photoB64 ? "pointer" : "not-allowed" }}>다음 단계 → 손목 사진</button>
+        <button onClick={() => setPhase("wrist")} disabled={!photoB64} style={{ width: "100%", padding: "18px", borderRadius: 16, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 15, fontWeight: 800, cursor: photoB64 ? "pointer" : "not-allowed" }}>다음 단계 → 손목 사진</button>
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } } @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
@@ -628,20 +686,19 @@ export default function Home() {
             {wristB64 && !isUploading && (<img src={`data:image/jpeg;base64,${wristB64}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />)}
           </div>
           <div style={{ padding: 16 }}>
-            <button onClick={() => wristFileRef.current?.click()} style={{ width: "100%", padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{wristB64 ? "🔄 다시 업로드" : "📁 손목 사진 업로드"}</button>
+            <button onClick={() => wristFileRef.current?.click()} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{wristB64 ? "🔄 다시 업로드" : "📁 손목 사진 업로드"}</button>
           </div>
         </div>
         <input ref={wristFileRef} type="file" accept="image/*" onChange={handleWristUpload} style={{ display: "none" }} />
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setPhase("capture")} style={{ flex: 1, padding: "16px", borderRadius: 16, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>← 이전</button>
-          <button onClick={analyzeColor} style={{ flex: 2, padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>✨ 분석 시작 {!wristB64 && "(손목 없이)"}</button>
+          <button onClick={() => setPhase("capture")} style={{ flex: 1, padding: "18px", borderRadius: 16, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>← 이전</button>
+          <button onClick={analyzeColor} style={{ flex: 2, padding: "18px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>✨ 분석 시작 {!wristB64 && "(손목 없이)"}</button>
         </div>
       </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } } @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </div>
   );
 
-  // KIT CONTENT (생략 — 동일)
   const KitContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
@@ -654,16 +711,17 @@ export default function Home() {
             </div>
             <div style={{ fontSize: 12, color: "#777", marginTop: 2 }}>{kit?.summary}</div>
           </div>
+          <button onClick={() => setShowShareCard(true)} title="결과 공유" style={{ background: "#fff", border: "none", borderRadius: 20, padding: "8px 12px", fontSize: 11, fontWeight: 700, color: acc, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>📤 공유</button>
         </div>
       </div>
       <div style={{ display: "flex", borderBottom: "1px solid #EEE" }}>
         {["palette","makeup","fashion","layering"].map(t => (
-          <button key={t} onClick={() => setActiveTab(t)} style={{ flex: 1, padding: "10px 4px", border: "none", background: "none", fontSize: 11, fontWeight: activeTab === t ? 800 : 500, color: activeTab === t ? acc : "#999", borderBottom: activeTab === t ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
+          <button key={t} onClick={() => setActiveTab(t)} style={{ flex: 1, padding: "12px 4px", border: "none", background: "none", fontSize: 11, fontWeight: activeTab === t ? 800 : 500, color: activeTab === t ? acc : "#999", borderBottom: activeTab === t ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>
             {t === "palette" ? "🎨 팔레트" : t === "makeup" ? "💄 메이크업" : t === "fashion" ? "👗 패션" : "🧥 레이어링"}
           </button>
         ))}
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px", WebkitOverflowScrolling: "touch" }}>
         {activeTab === "palette" && (
           <div>
             <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: 700, fontStyle: "italic" }}>Best Colors ✨</p>
@@ -731,18 +789,18 @@ export default function Home() {
           </div>
           {!isMobile && (
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => { setShowStats(!showStats); setShowSaved(false); }} title="통계" style={{ background: showStats ? acc : "#fff", color: showStats ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📊 통계</button>
-              <button onClick={() => { setShowSaved(!showSaved); setShowStats(false); }} title="즐겨찾기" style={{ background: showSaved ? acc : "#fff", color: showSaved ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>💕 {savedOutfits.length}</button>
-              <button onClick={() => clothFileRef.current?.click()} disabled={isClothLoading} style={{ background: acc, color: "#fff", border: "none", borderRadius: 20, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: isClothLoading ? "not-allowed" : "pointer", opacity: isClothLoading ? 0.6 : 1 }}>+ 추가</button>
+              <button onClick={() => { setShowStats(!showStats); setShowSaved(false); }} title="통계" style={{ background: showStats ? acc : "#fff", color: showStats ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📊 통계</button>
+              <button onClick={() => { setShowSaved(!showSaved); setShowStats(false); }} title="즐겨찾기" style={{ background: showSaved ? acc : "#fff", color: showSaved ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>💕 {savedOutfits.length}</button>
+              <button onClick={() => clothFileRef.current?.click()} disabled={isClothLoading} style={{ background: acc, color: "#fff", border: "none", borderRadius: 20, padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: isClothLoading ? "not-allowed" : "pointer", opacity: isClothLoading ? 0.6 : 1 }}>+ 추가</button>
             </div>
           )}
         </div>
 
         {isMobile && (
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            <button onClick={() => { setShowStats(!showStats); setShowSaved(false); }} style={{ flex: 1, background: showStats ? acc : "#fff", color: showStats ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 10, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📊 통계</button>
-            <button onClick={() => { setShowSaved(!showSaved); setShowStats(false); }} style={{ flex: 1, background: showSaved ? acc : "#fff", color: showSaved ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 10, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>💕 즐겨찾기 {savedOutfits.length}</button>
-            <button onClick={() => clothFileRef.current?.click()} disabled={isClothLoading} style={{ flex: 1, background: acc, color: "#fff", border: "none", borderRadius: 10, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: isClothLoading ? 0.6 : 1 }}>+ 옷 추가</button>
+            <button onClick={() => { setShowStats(!showStats); setShowSaved(false); }} style={{ flex: 1, background: showStats ? acc : "#fff", color: showStats ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 10, padding: "10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📊 통계</button>
+            <button onClick={() => { setShowSaved(!showSaved); setShowStats(false); }} style={{ flex: 1, background: showSaved ? acc : "#fff", color: showSaved ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 10, padding: "10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>💕 즐겨찾기 {savedOutfits.length}</button>
+            <button onClick={() => clothFileRef.current?.click()} disabled={isClothLoading} style={{ flex: 1, background: acc, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: isClothLoading ? 0.6 : 1 }}>+ 옷 추가</button>
           </div>
         )}
 
@@ -761,7 +819,7 @@ export default function Home() {
         {clothes.length > 0 && !showSaved && !showStats && stats.byCategory.length > 1 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 4 }}>
             {["전체", ...stats.byCategory.map(s => s.cat)].map(cat => (
-              <button key={cat} onClick={() => setCategoryFilter(cat)} style={{ background: categoryFilter === cat ? acc : "#fff", color: categoryFilter === cat ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+              <button key={cat} onClick={() => setCategoryFilter(cat)} style={{ background: categoryFilter === cat ? acc : "#fff", color: categoryFilter === cat ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
                 {cat}{cat !== "전체" && ` ${clothes.filter(c => c.category === cat).length}`}
               </button>
             ))}
@@ -770,7 +828,7 @@ export default function Home() {
 
         {clothes.length >= 5 && !showSaved && !showStats && (
           <div style={{ marginTop: 8 }}>
-            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 옷 검색 (이름·색·무드)" style={{ width: "100%", padding: "8px 12px", borderRadius: 10, border: "1px solid #DDD", fontSize: 12, outline: "none", fontFamily: "inherit" }} />
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 옷 검색 (이름·색·무드)" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 12, outline: "none", fontFamily: "inherit" }} />
             {searchQuery && (
               <p style={{ fontSize: 10, color: "#999", marginTop: 4, textAlign: "right" }}>
                 <button onClick={() => setSearchQuery("")} style={{ background: "none", border: "none", color: acc, cursor: "pointer", fontWeight: 600 }}>✕ 검색 지우기</button>
@@ -780,12 +838,12 @@ export default function Home() {
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px", WebkitOverflowScrolling: "touch" }}>
         {showStats && (
           <div style={{ animation: "fadeIn 0.3s" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 700, fontStyle: "italic" }}>📊 Stats</p>
-              <button onClick={() => setShowStats(false)} style={{ background: "#fff", border: "1px solid #DDD", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>← 옷장</button>
+              <button onClick={() => setShowStats(false)} style={{ background: "#fff", border: "1px solid #DDD", borderRadius: 20, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>← 옷장</button>
             </div>
             {clothes.length < 5 ? (
               <div style={{ textAlign: "center", padding: "30px 20px", background: "#FAF8F5", borderRadius: 16 }}>
@@ -831,7 +889,7 @@ export default function Home() {
           <div style={{ animation: "fadeIn 0.3s" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 700, fontStyle: "italic" }}>💕 Saved</p>
-              <button onClick={() => setShowSaved(false)} style={{ background: "#fff", border: "1px solid #DDD", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>← 옷장</button>
+              <button onClick={() => setShowSaved(false)} style={{ background: "#fff", border: "1px solid #DDD", borderRadius: 20, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>← 옷장</button>
             </div>
             {savedOutfits.length === 0 ? (
               <div style={{ textAlign: "center", padding: "30px 20px" }}>
@@ -847,13 +905,13 @@ export default function Home() {
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
                         <p style={{ fontSize: 14, fontWeight: 800, color: acc }}>{out.title}</p>
                         <div style={{ display: "flex", gap: 4 }}>
-                          {items.length > 0 && (<button onClick={() => shareOutfit(out, items)} title="공유" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>📤</button>)}
-                          <button onClick={() => removeSavedOutfit(out.id)} title="삭제" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>🗑️</button>
+                          {items.length > 0 && (<button onClick={() => shareOutfit(out, items)} title="공유" style={{ width: 32, height: 32, background: "none", border: "none", cursor: "pointer", fontSize: 16, borderRadius: 8 }}>📤</button>)}
+                          <button onClick={() => removeSavedOutfit(out.id)} title="삭제" style={{ width: 32, height: 32, background: "none", border: "none", cursor: "pointer", fontSize: 14, borderRadius: 8 }}>🗑️</button>
                         </div>
                       </div>
                       <p style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{out.mood}</p>
                       {items.length > 0 ? (
-                        <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                           {items.map((item, i) => (<img key={i} onClick={() => setZoomImage(item.image)} src={`data:image/jpeg;base64,${item.image}`} style={{ width: 100, height: 130, borderRadius: 12, objectFit: "cover", flexShrink: 0, border: "1px solid #EEE", cursor: "pointer" }} alt="" />))}
                         </div>
                       ) : (
@@ -878,7 +936,7 @@ export default function Home() {
                 <div style={{ fontSize: 56, marginBottom: 16 }}>👗</div>
                 <p style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>옷장이 비어있어요</p>
                 <p style={{ fontSize: 12, color: "#888", lineHeight: 1.7, marginBottom: 20 }}>가지고 있는 옷을 등록하면<br />AI가 매일 어울리는 코디를<br />추천해줄 거예요 ✨</p>
-                <button onClick={() => clothFileRef.current?.click()} style={{ background: `linear-gradient(135deg,${acc},${acc}AA)`, color: "#fff", border: "none", borderRadius: 24, padding: "12px 24px", fontSize: 13, fontWeight: 800, cursor: "pointer", boxShadow: `0 8px 24px ${acc}40` }}>+ 첫 옷 등록하기</button>
+                <button onClick={() => clothFileRef.current?.click()} style={{ background: `linear-gradient(135deg,${acc},${acc}AA)`, color: "#fff", border: "none", borderRadius: 24, padding: "14px 28px", fontSize: 13, fontWeight: 800, cursor: "pointer", boxShadow: `0 8px 24px ${acc}40` }}>+ 첫 옷 등록하기</button>
                 <p style={{ fontSize: 10, color: "#BBB", marginTop: 14 }}>💡 여러 장 한꺼번에 올릴 수 있어요</p>
               </div>
             ) : (
@@ -896,9 +954,9 @@ export default function Home() {
                         <div onClick={() => setSelectedBaseId(selectedBaseId === c.id ? null : c.id)} style={{ aspectRatio: "3/4", overflow: "hidden", position: "relative", cursor: "pointer" }}>
                           <img src={`data:image/jpeg;base64,${c.image}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={c.name} />
                           <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 4 }}>
-                            <button onClick={(e) => { e.stopPropagation(); markAsWorn(c.id); }} title="오늘 입었어요" style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>👕</button>
-                            <button onClick={(e) => { e.stopPropagation(); setEditingCloth(c); }} style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✏️</button>
-                            <button onClick={(e) => { e.stopPropagation(); removeCloth(c.id); }} style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✕</button>
+                            <button onClick={(e) => { e.stopPropagation(); markAsWorn(c.id); }} title="오늘 입었어요" style={{ width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12 }}>👕</button>
+                            <button onClick={(e) => { e.stopPropagation(); setEditingCloth(c); }} style={{ width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✏️</button>
+                            <button onClick={(e) => { e.stopPropagation(); removeCloth(c.id); }} style={{ width: 28, height: 28, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✕</button>
                           </div>
                           {selectedBaseId === c.id && (<div style={{ position: "absolute", bottom: 6, left: 6, background: acc, color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>✓ 기준</div>)}
                           {c.lastWornDate && (<div style={{ position: "absolute", bottom: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", borderRadius: 10, padding: "2px 6px", fontSize: 9, fontWeight: 600 }}>📅 {c.lastWornDate.slice(5)}</div>)}
@@ -919,13 +977,13 @@ export default function Home() {
                 <div style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, marginBottom: 16 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                     <p style={{ fontSize: 13, fontWeight: 800 }}>✨ 코디 추천 받기</p>
-                    <button onClick={fetchWeather} disabled={weatherLoading} style={{ background: weather ? acc : "#fff", color: weather ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "4px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                    <button onClick={fetchWeather} disabled={weatherLoading} style={{ background: weather ? acc : "#fff", color: weather ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "6px 12px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
                       {weatherLoading ? "..." : weather ? `${weather.emoji} ${weather.temp}°` : "🌤️ 오늘 날씨"}
                     </button>
                   </div>
-                  <input value={situationInput} onChange={e => setSituationInput(e.target.value)} placeholder="예: 데이트, 출근 등 (선택)" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 12, outline: "none", marginBottom: 10, fontFamily: "inherit" }} />
+                  <input value={situationInput} onChange={e => setSituationInput(e.target.value)} placeholder="예: 데이트, 출근 등 (선택)" style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 12, outline: "none", marginBottom: 10, fontFamily: "inherit" }} />
                   {selectedBaseId && findClothById(selectedBaseId) && (<p style={{ fontSize: 11, color: acc, marginBottom: 8, fontWeight: 600 }}>📌 기준: {findClothById(selectedBaseId)?.name}</p>)}
-                  <button onClick={recommendOutfit} disabled={outfitLoading || clothes.length < 2} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: clothes.length < 2 ? "#DDD" : `linear-gradient(135deg,${acc},${acc}AA)`, color: "#fff", fontSize: 13, fontWeight: 800, cursor: clothes.length < 2 ? "not-allowed" : "pointer" }}>
+                  <button onClick={recommendOutfit} disabled={outfitLoading || clothes.length < 2} style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: clothes.length < 2 ? "#DDD" : `linear-gradient(135deg,${acc},${acc}AA)`, color: "#fff", fontSize: 13, fontWeight: 800, cursor: clothes.length < 2 ? "not-allowed" : "pointer" }}>
                     {outfitLoading ? "AI가 코디 짜는 중..." : "🎨 코디 추천 받기"}
                   </button>
                   {clothes.length < 2 && (<p style={{ fontSize: 10, color: "#999", marginTop: 6, textAlign: "center" }}>최소 2벌 이상 등록 필요</p>)}
@@ -941,15 +999,15 @@ export default function Home() {
                         <div key={idx} style={{ background: "#fff", border: `2px solid ${acc}20`, borderRadius: 16, padding: 14 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
                             <p style={{ fontSize: 14, fontWeight: 800, color: acc }}>{out.title}</p>
-                            <div style={{ display: "flex", gap: 6 }}>
-                              <button onClick={() => shareOutfit(out, items)} title="공유" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>📤</button>
-                              <button onClick={() => toggleSaveOutfit(out)} title={saved ? "즐겨찾기 해제" : "즐겨찾기 저장"} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: saved ? acc : "#CCC" }}>
+                            <div style={{ display: "flex", gap: 4 }}>
+                              <button onClick={() => shareOutfit(out, items)} title="공유" style={{ width: 32, height: 32, background: "none", border: "none", cursor: "pointer", fontSize: 16, borderRadius: 8 }}>📤</button>
+                              <button onClick={() => toggleSaveOutfit(out)} title={saved ? "즐겨찾기 해제" : "즐겨찾기 저장"} style={{ width: 32, height: 32, background: "none", border: "none", cursor: "pointer", fontSize: 20, color: saved ? acc : "#CCC", borderRadius: 8 }}>
                                 {saved ? "♥" : "♡"}
                               </button>
                             </div>
                           </div>
                           <p style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{out.mood}</p>
-                          <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
+                          <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                             {items.map((item, i) => (<img key={i} onClick={() => setZoomImage(item.image)} src={`data:image/jpeg;base64,${item.image}`} style={{ width: 100, height: 130, borderRadius: 12, objectFit: "cover", flexShrink: 0, border: "1px solid #EEE", cursor: "pointer" }} alt="" />))}
                           </div>
                           <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6, marginBottom: 8 }}>{out.reason}</p>
@@ -967,14 +1025,13 @@ export default function Home() {
     </div>
   );
 
-  // SHOP CONTENT (영감 분석 + 옷장 매칭 + 키트 안내)
   const ShopContent = (
     <div style={{ display: "flex", flexDirection: "column", background: "#FAFAF7", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E4DE", background: "#fff" }}>
         <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>🛍️ 쇼핑 도움 — 상품 올리면 분석해줘요</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-          <div onClick={() => shopFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: shopImg ? "none" : "2px dashed #DDD", background: "#F7F5F2", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {shopImg ? <img src={`data:image/jpeg;base64,${shopImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#CCC" }}>+</span>}
+          <div onClick={() => shopFileRef.current?.click()} style={{ width: 80, height: 80, borderRadius: 14, border: shopImg ? "none" : "2px dashed #DDD", background: "#F7F5F2", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {shopImg ? <img src={`data:image/jpeg;base64,${shopImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 24, color: "#CCC" }}>+</span>}
           </div>
           <input ref={shopFileRef} type="file" accept="image/*" onChange={handleShopUpload} style={{ display: "none" }} />
           <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>상품 이미지를 올리면<br />어울림을 분석해요</p>
@@ -983,8 +1040,8 @@ export default function Home() {
         <div style={{ borderTop: "1px solid #EEE", paddingTop: 10 }}>
           <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>📌 영감 분석 — 따라하고 싶은 메이크업/코디 사진 올리기</p>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <div onClick={() => inspirationFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: inspirationImg ? "none" : "2px dashed #C2185B60", background: "#FFF0F4", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {inspirationImg ? <img src={`data:image/jpeg;base64,${inspirationImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#C2185B" }}>📌</span>}
+            <div onClick={() => inspirationFileRef.current?.click()} style={{ width: 80, height: 80, borderRadius: 14, border: inspirationImg ? "none" : "2px dashed #C2185B60", background: "#FFF0F4", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {inspirationImg ? <img src={`data:image/jpeg;base64,${inspirationImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 24, color: "#C2185B" }}>📌</span>}
             </div>
             <input ref={inspirationFileRef} type="file" accept="image/*" onChange={handleInspirationUpload} style={{ display: "none" }} />
             <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>핀터레스트·인스타 등에서<br />캡처한 사진 올려보세요 ✨</p>
@@ -1006,14 +1063,13 @@ export default function Home() {
                 <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic", color: acc }}>
                   ✨ {inspirationResult.type === "makeup" ? "메이크업 분석" : "코디 분석"}
                 </p>
-                <button onClick={() => { setInspirationResult(null); setInspirationImg(null); }} style={{ background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: 14 }}>✕</button>
+                <button onClick={() => { setInspirationResult(null); setInspirationImg(null); }} style={{ width: 32, height: 32, background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: 14, borderRadius: 8 }}>✕</button>
               </div>
 
               <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
                 <p style={{ fontSize: 13, fontWeight: 800, color: "#333", marginBottom: 4 }}>{inspirationResult.mood}</p>
                 <p style={{ fontSize: 10, color: "#999", fontStyle: "italic" }}>{inspirationResult.moodEn}</p>
 
-                {/* 키트 있으면 매칭 점수, 없으면 안내 */}
                 {kit && inspirationResult.matchScore ? (
                   <div style={{ marginTop: 10, padding: "10px 12px", background: inspirationResult.matchScore >= 80 ? "#E8F5E9" : inspirationResult.matchScore >= 60 ? "#FFF8E1" : "#FFEBEE", borderRadius: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -1078,7 +1134,7 @@ export default function Home() {
                       <p style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>컬러 팔레트</p>
                       <div style={{ display: "flex", gap: 4 }}>
                         {inspirationResult.colors.filter((c: any) => isValidHex(c.hex)).map((c: any, i: number) => (
-                          <button key={i} onClick={() => copyHex(c.hex)} title={c.name} style={{ width: 24, height: 24, borderRadius: "50%", background: c.hex, border: "2px solid #fff", boxShadow: `0 0 0 1px ${c.hex}`, cursor: "pointer" }} />
+                          <button key={i} onClick={() => copyHex(c.hex)} title={c.name} style={{ width: 28, height: 28, borderRadius: "50%", background: c.hex, border: "2px solid #fff", boxShadow: `0 0 0 1px ${c.hex}`, cursor: "pointer" }} />
                         ))}
                       </div>
                     </div>
@@ -1086,15 +1142,14 @@ export default function Home() {
                 </div>
               )}
 
-              {/* 옷장 매칭 (코디일 때만) */}
               {inspirationResult.type === "fashion" && similarClothes.length > 0 && (
                 <div style={{ background: `${acc}10`, borderRadius: 12, padding: 12, marginBottom: 8 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: acc, marginBottom: 8 }}>👗 옷장에 비슷한 옷이 {similarClothes.length}벌 있어요!</p>
-                  <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+                  <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                     {similarClothes.map((c) => (
                       <div key={c.id} onClick={() => setZoomImage(c.image)} style={{ flexShrink: 0, cursor: "pointer", textAlign: "center" }}>
-                        <img src={`data:image/jpeg;base64,${c.image}`} style={{ width: 60, height: 80, borderRadius: 8, objectFit: "cover", border: "1px solid #EEE" }} alt={c.name} />
-                        <p style={{ fontSize: 9, color: "#666", marginTop: 4, maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
+                        <img src={`data:image/jpeg;base64,${c.image}`} style={{ width: 70, height: 90, borderRadius: 8, objectFit: "cover", border: "1px solid #EEE" }} alt={c.name} />
+                        <p style={{ fontSize: 9, color: "#666", marginTop: 4, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
                       </div>
                     ))}
                   </div>
@@ -1120,7 +1175,7 @@ export default function Home() {
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, WebkitOverflowScrolling: "touch" }}>
         {messages.map((m, i) => (
           <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
             {m.role === "ai" && (<div style={{ width: 26, height: 26, borderRadius: "50%", background: `linear-gradient(135deg,${acc},${acc}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🎨</div>)}
@@ -1131,11 +1186,11 @@ export default function Home() {
         <div ref={chatEndRef} />
       </div>
       <div style={{ padding: "6px 16px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {["이 색 어울려?","대안 추천해줘","코디 어떻게?"].map(s => (<button key={s} onClick={() => sendChat(s)} disabled={chatLoading} style={{ background: "#F0EDE8", border: "none", borderRadius: 20, padding: "5px 11px", color: "#777", fontSize: 10, cursor: "pointer", fontWeight: 600 }}>{s}</button>))}
+        {["이 색 어울려?","대안 추천해줘","코디 어떻게?"].map(s => (<button key={s} onClick={() => sendChat(s)} disabled={chatLoading} style={{ background: "#F0EDE8", border: "none", borderRadius: 20, padding: "6px 12px", color: "#777", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>{s}</button>))}
       </div>
       <div style={{ padding: "10px 16px", borderTop: "1px solid #E8E4DE", display: "flex", gap: 8, background: "#fff" }}>
-        <input value={chatInput} onChange={e => setChatInput(e.target.value)} onCompositionStart={() => { isComposingRef.current = true; }} onCompositionEnd={() => { isComposingRef.current = false; }} onKeyDown={handleKeyDown} placeholder="궁금한 점을 물어보세요..." style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "9px 16px", color: "#333", fontSize: 13, outline: "none" }} />
-        <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading} style={{ width: 38, height: 38, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 15 }}>↑</button>
+        <input value={chatInput} onChange={e => setChatInput(e.target.value)} onCompositionStart={() => { isComposingRef.current = true; }} onCompositionEnd={() => { isComposingRef.current = false; }} onKeyDown={handleKeyDown} placeholder="궁금한 점을 물어보세요..." style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "10px 16px", color: "#333", fontSize: 13, outline: "none" }} />
+        <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading} style={{ width: 42, height: 42, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 16 }}>↑</button>
       </div>
     </div>
   );
@@ -1151,15 +1206,15 @@ export default function Home() {
           </div>
           {kit && <span style={{ fontSize: 10, background: acc, color: "#fff", padding: "3px 10px", borderRadius: 20, fontWeight: 700, marginLeft: 4 }}>{kit.season}</span>}
         </div>
-        <button onClick={resetAll} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "5px 14px", cursor: "pointer", fontWeight: 600 }}>🔄 키트 재분석</button>
+        <button onClick={resetAll} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "6px 14px", cursor: "pointer", fontWeight: 600 }}>🔄 키트 재분석</button>
       </header>
 
       {isMobile ? (
         <>
           <div style={{ display: "flex", borderBottom: "1px solid #EEE", background: "#fff" }}>
-            <button onClick={() => setMobileView("kit")} style={{ flex: 1, padding: "12px 4px", border: "none", background: "none", fontSize: 12, fontWeight: mobileView === "kit" ? 800 : 500, color: mobileView === "kit" ? acc : "#999", borderBottom: mobileView === "kit" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>🎨 키트</button>
-            <button onClick={() => setMobileView("wardrobe")} style={{ flex: 1, padding: "12px 4px", border: "none", background: "none", fontSize: 12, fontWeight: mobileView === "wardrobe" ? 800 : 500, color: mobileView === "wardrobe" ? acc : "#999", borderBottom: mobileView === "wardrobe" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>👗 옷장</button>
-            <button onClick={() => setMobileView("chat")} style={{ flex: 1, padding: "12px 4px", border: "none", background: "none", fontSize: 12, fontWeight: mobileView === "chat" ? 800 : 500, color: mobileView === "chat" ? acc : "#999", borderBottom: mobileView === "chat" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>🛍️ 쇼핑</button>
+            <button onClick={() => setMobileView("kit")} style={{ flex: 1, padding: "14px 4px", border: "none", background: "none", fontSize: 12, fontWeight: mobileView === "kit" ? 800 : 500, color: mobileView === "kit" ? acc : "#999", borderBottom: mobileView === "kit" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>🎨 키트</button>
+            <button onClick={() => setMobileView("wardrobe")} style={{ flex: 1, padding: "14px 4px", border: "none", background: "none", fontSize: 12, fontWeight: mobileView === "wardrobe" ? 800 : 500, color: mobileView === "wardrobe" ? acc : "#999", borderBottom: mobileView === "wardrobe" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>👗 옷장</button>
+            <button onClick={() => setMobileView("chat")} style={{ flex: 1, padding: "14px 4px", border: "none", background: "none", fontSize: 12, fontWeight: mobileView === "chat" ? 800 : 500, color: mobileView === "chat" ? acc : "#999", borderBottom: mobileView === "chat" ? `2px solid ${acc}` : "2px solid transparent", cursor: "pointer" }}>🛍️ 쇼핑</button>
           </div>
           <div style={{ flex: 1, overflow: "hidden" }}>{mobileView === "kit" ? KitContent : mobileView === "wardrobe" ? WardrobeContent : ShopContent}</div>
         </>
@@ -1177,20 +1232,20 @@ export default function Home() {
             <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 700, fontStyle: "italic", marginBottom: 16 }}>옷 정보 수정</p>
             <img src={`data:image/jpeg;base64,${editingCloth.image}`} style={{ width: "100%", aspectRatio: "3/4", objectFit: "cover", borderRadius: 12, marginBottom: 16 }} alt="" />
             <label style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 4, display: "block" }}>이름</label>
-            <input value={editingCloth.name} onChange={e => setEditingCloth({...editingCloth, name: e.target.value})} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 13, outline: "none", marginBottom: 12, fontFamily: "inherit" }} />
+            <input value={editingCloth.name} onChange={e => setEditingCloth({...editingCloth, name: e.target.value})} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 13, outline: "none", marginBottom: 12, fontFamily: "inherit" }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 4, display: "block" }}>카테고리</label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-              {CATEGORIES.map(cat => (<button key={cat} onClick={() => setEditingCloth({...editingCloth, category: cat})} style={{ padding: "6px 12px", borderRadius: 20, border: "1px solid #DDD", background: editingCloth.category === cat ? acc : "#fff", color: editingCloth.category === cat ? "#fff" : "#666", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{cat}</button>))}
+              {CATEGORIES.map(cat => (<button key={cat} onClick={() => setEditingCloth({...editingCloth, category: cat})} style={{ padding: "8px 14px", borderRadius: 20, border: "1px solid #DDD", background: editingCloth.category === cat ? acc : "#fff", color: editingCloth.category === cat ? "#fff" : "#666", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{cat}</button>))}
             </div>
             <label style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 4, display: "block" }}>무드</label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-              {MOODS.map(m => (<button key={m} onClick={() => setEditingCloth({...editingCloth, mood: m})} style={{ padding: "6px 12px", borderRadius: 20, border: "1px solid #DDD", background: editingCloth.mood === m ? acc : "#fff", color: editingCloth.mood === m ? "#fff" : "#666", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{m}</button>))}
+              {MOODS.map(m => (<button key={m} onClick={() => setEditingCloth({...editingCloth, mood: m})} style={{ padding: "8px 14px", borderRadius: 20, border: "1px solid #DDD", background: editingCloth.mood === m ? acc : "#fff", color: editingCloth.mood === m ? "#fff" : "#666", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{m}</button>))}
             </div>
             <label style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 4, display: "block" }}>색상 이름</label>
-            <input value={editingCloth.colorName} onChange={e => setEditingCloth({...editingCloth, colorName: e.target.value})} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 13, outline: "none", marginBottom: 16, fontFamily: "inherit" }} />
+            <input value={editingCloth.colorName} onChange={e => setEditingCloth({...editingCloth, colorName: e.target.value})} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 13, outline: "none", marginBottom: 16, fontFamily: "inherit" }} />
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setEditingCloth(null)} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>취소</button>
-              <button onClick={() => updateCloth(editingCloth)} style={{ flex: 2, padding: "12px", borderRadius: 12, border: "none", background: acc, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>✓ 저장</button>
+              <button onClick={() => setEditingCloth(null)} style={{ flex: 1, padding: "14px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>취소</button>
+              <button onClick={() => updateCloth(editingCloth)} style={{ flex: 2, padding: "14px", borderRadius: 12, border: "none", background: acc, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>✓ 저장</button>
             </div>
           </div>
         </div>
@@ -1198,19 +1253,51 @@ export default function Home() {
 
       {zoomImage && (
         <div onClick={() => setZoomImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3000, padding: 20, cursor: "pointer" }}>
-          <button onClick={(e) => { e.stopPropagation(); setZoomImage(null); }} style={{ position: "absolute", top: 20, right: 20, width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.2)", color: "#fff", border: "none", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          <button onClick={(e) => { e.stopPropagation(); setZoomImage(null); }} style={{ position: "absolute", top: 20, right: 20, width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.2)", color: "#fff", border: "none", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
           <img src={`data:image/jpeg;base64,${zoomImage}`} style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 12 }} alt="" />
         </div>
       )}
 
-      {toast && (<div style={{ position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", background: "#1A1A1A", color: "#fff", padding: "10px 20px", borderRadius: 24, fontSize: 13, fontWeight: 600, zIndex: 1000, boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>{toast}</div>)}
+      {/* 결과 공유 카드 */}
+      {showShareCard && kit && (
+        <div onClick={() => setShowShareCard(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 4000, padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: SEASONS[kit.season]?.bg, borderRadius: 24, padding: "32px 28px", maxWidth: 360, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", animation: "fadeIn 0.4s" }}>
+            <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 12, color: acc, fontStyle: "italic", letterSpacing: 3, marginBottom: 8 }}>YOUR PERSONAL COLOR</p>
+            <h2 style={{ fontSize: 36, fontWeight: 900, color: acc, marginBottom: 8, fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic" }}>{SEASONS[kit.season]?.label}</h2>
+            <p style={{ fontSize: 13, color: "#666", marginBottom: 20, lineHeight: 1.6 }}>{kit.summary}</p>
+            
+            {kit.palette?.best && (
+              <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 24 }}>
+                {kit.palette.best.slice(0, 5).map((c: any, i: number) => (
+                  <div key={i} style={{ width: 36, height: 36, borderRadius: "50%", background: c.hex || c, border: "3px solid #fff", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }} />
+                ))}
+              </div>
+            )}
+
+            <div style={{ background: "rgba(255,255,255,0.7)", borderRadius: 12, padding: "12px 16px", marginBottom: 20 }}>
+              <p style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>🌐 Personal Color Kit</p>
+              <p style={{ fontSize: 11, color: "#888" }}>친구도 무료로 진단받아보세요!</p>
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowShareCard(false)} style={{ flex: 1, padding: "14px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>닫기</button>
+              <button onClick={shareKitResult} style={{ flex: 2, padding: "14px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${acc},${acc}AA)`, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>📤 공유하기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (<div style={{ position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", background: "#1A1A1A", color: "#fff", padding: "12px 20px", borderRadius: 24, fontSize: 13, fontWeight: 600, zIndex: 1000, boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>{toast}</div>)}
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600;1,700&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        body { -webkit-font-smoothing: antialiased; }
         @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        button { -webkit-tap-highlight-color: transparent; }
+        input, button { font-family: inherit; }
       `}</style>
     </div>
   );
