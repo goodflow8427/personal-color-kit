@@ -78,6 +78,7 @@ export default function Home() {
   const wristFileRef = useRef<HTMLInputElement>(null);
   const shopFileRef = useRef<HTMLInputElement>(null);
   const clothFileRef = useRef<HTMLInputElement>(null);
+  const inspirationFileRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const outfitResultRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
@@ -120,6 +121,11 @@ export default function Home() {
   const [weather, setWeather] = useState<{ temp: number; desc: string; emoji: string } | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
+
+  // 영감 분석
+  const [inspirationImg, setInspirationImg] = useState<string | null>(null);
+  const [inspirationResult, setInspirationResult] = useState<any>(null);
+  const [inspirationLoading, setInspirationLoading] = useState(false);
 
   useEffect(() => {
     try {
@@ -278,7 +284,6 @@ export default function Home() {
   };
 
   const removeCloth = (id: string) => {
-    // 즐겨찾기 영향 확인
     const affected = savedOutfits.filter(o => o.itemIds.includes(id)).length;
     setClothes(p => p.filter(c => c.id !== id));
     if (selectedBaseId === id) setSelectedBaseId(null);
@@ -353,6 +358,39 @@ export default function Home() {
   };
 
   const removeSavedOutfit = (id: string) => setSavedOutfits(p => p.filter(o => o.id !== id));
+
+  // 영감 분석 (핀터레스트 등)
+  const analyzeInspiration = async (b64: string) => {
+    setInspirationLoading(true);
+    setInspirationResult(null);
+    try {
+      const res = await fetch("/api/inspiration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: b64, userKit: kit }),
+      });
+      const data = await res.json();
+      if (data.analysis) {
+        setInspirationResult(data.analysis);
+      } else {
+        setToast("분석 실패 😢");
+        setTimeout(() => setToast(null), 2000);
+      }
+    } catch {
+      setToast("분석 중 오류가 발생했어요");
+      setTimeout(() => setToast(null), 2000);
+    }
+    setInspirationLoading(false);
+  };
+
+  const handleInspirationUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const data = await resizeImage(f, 800);
+    setInspirationImg(data);
+    if (isMobile) setMobileView("chat");
+    await analyzeInspiration(data);
+    if (e.target) e.target.value = "";
+  };
 
   const shareOutfit = async (outfit: any, items: ClothItem[]) => {
     const text = `🎨 ${outfit.title}\n${outfit.mood}\n\n구성: ${items.map(i => i.name).join(", ")}\n\n${outfit.reason}\n\n💡 ${outfit.tip}\n\n🌐 Personal Color Kit에서 추천받았어요!`;
@@ -657,11 +695,10 @@ export default function Home() {
     </div>
   );
 
-  // ── WARDROBE CONTENT (헤더 모바일 분리, 추천 박스 항상 표시) ──
+  // ── WARDROBE CONTENT ──
   const WardrobeContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEE", background: "#FAFAF7" }}>
-        {/* 첫 줄: 제목 */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <div>
             <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, fontStyle: "italic" }}>My Wardrobe</p>
@@ -676,7 +713,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* 모바일: 두 번째 줄에 버튼들 */}
         {isMobile && (
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
             <button onClick={() => { setShowStats(!showStats); setShowSaved(false); }} style={{ flex: 1, background: showStats ? acc : "#fff", color: showStats ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 10, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>📊 통계</button>
@@ -687,7 +723,6 @@ export default function Home() {
 
         <input ref={clothFileRef} type="file" accept="image/*" multiple onChange={handleClothUpload} style={{ display: "none" }} />
 
-        {/* 날씨 카드 */}
         {weather && !showSaved && !showStats && clothes.length > 0 && (
           <div style={{ background: "#fff", borderRadius: 12, padding: "8px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8, border: "1px solid #EEE" }}>
             <span style={{ fontSize: 24 }}>{weather.emoji}</span>
@@ -698,7 +733,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* 카테고리 필터 */}
         {clothes.length > 0 && !showSaved && !showStats && stats.byCategory.length > 1 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 4 }}>
             {["전체", ...stats.byCategory.map(s => s.cat)].map(cat => (
@@ -709,7 +743,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* 검색창 */}
         {clothes.length >= 5 && !showSaved && !showStats && (
           <div style={{ marginTop: 8 }}>
             <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 옷 검색 (이름·색·무드)" style={{ width: "100%", padding: "8px 12px", borderRadius: 10, border: "1px solid #DDD", fontSize: 12, outline: "none", fontFamily: "inherit" }} />
@@ -825,7 +858,6 @@ export default function Home() {
               </div>
             ) : (
               <>
-                {/* 검색 결과 안내 */}
                 {searchQuery && filteredClothes.length === 0 && (
                   <div style={{ background: "#FFF8E1", border: "1px solid #FFE082", borderRadius: 12, padding: "12px 16px", marginBottom: 16, textAlign: "center" }}>
                     <p style={{ fontSize: 12, color: "#666" }}>"{searchQuery}" 검색 결과가 없어요<br /><span style={{ fontSize: 10, color: "#999" }}>아래 코디 추천은 전체 옷장 기준이에요</span></p>
@@ -859,7 +891,6 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 코디 추천 박스는 항상 표시 (검색 결과 0이어도) */}
                 <div style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, marginBottom: 16 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                     <p style={{ fontSize: 13, fontWeight: 800 }}>✨ 코디 추천 받기</p>
@@ -911,18 +942,141 @@ export default function Home() {
     </div>
   );
 
+  // ── SHOP CONTENT (영감 분석 추가) ──
   const ShopContent = (
     <div style={{ display: "flex", flexDirection: "column", background: "#FAFAF7", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E4DE", background: "#fff" }}>
         <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>🛍️ 쇼핑 도움 — 상품 올리면 분석해줘요</p>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
           <div onClick={() => shopFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: shopImg ? "none" : "2px dashed #DDD", background: "#F7F5F2", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {shopImg ? <img src={`data:image/jpeg;base64,${shopImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#CCC" }}>+</span>}
           </div>
           <input ref={shopFileRef} type="file" accept="image/*" onChange={handleShopUpload} style={{ display: "none" }} />
           <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>상품 이미지를 올리면<br />어울림을 분석해요</p>
         </div>
+
+        {/* 영감 분석 (핀터레스트 등) */}
+        <div style={{ borderTop: "1px solid #EEE", paddingTop: 10 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 8 }}>📌 영감 분석 — 핀터레스트 캡처 따라하기</p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div onClick={() => inspirationFileRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 14, border: inspirationImg ? "none" : "2px dashed #C2185B60", background: "#FFF0F4", overflow: "hidden", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {inspirationImg ? <img src={`data:image/jpeg;base64,${inspirationImg}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, color: "#C2185B" }}>📌</span>}
+            </div>
+            <input ref={inspirationFileRef} type="file" accept="image/*" onChange={handleInspirationUpload} style={{ display: "none" }} />
+            <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>메이크업/코디 사진 올리면<br />AI가 분석해드려요 ✨</p>
+          </div>
+        </div>
       </div>
+
+      {/* 영감 분석 결과 */}
+      {(inspirationLoading || inspirationResult) && (
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid #EEE", background: "#FFF8FA" }}>
+          {inspirationLoading && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0" }}>
+              <div style={{ width: 24, height: 24, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+              <p style={{ fontSize: 12, color: "#666" }}>AI가 분석 중...</p>
+            </div>
+          )}
+          {inspirationResult && (
+            <div style={{ animation: "fadeIn 0.4s" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic", color: acc }}>
+                  ✨ {inspirationResult.type === "makeup" ? "메이크업 분석" : "코디 분석"}
+                </p>
+                <button onClick={() => { setInspirationResult(null); setInspirationImg(null); }} style={{ background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: 14 }}>✕</button>
+              </div>
+
+              <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                <p style={{ fontSize: 13, fontWeight: 800, color: "#333", marginBottom: 4 }}>{inspirationResult.mood}</p>
+                <p style={{ fontSize: 10, color: "#999", fontStyle: "italic" }}>{inspirationResult.moodEn}</p>
+
+                {kit && inspirationResult.matchScore && (
+                  <div style={{ marginTop: 10, padding: "10px 12px", background: inspirationResult.matchScore >= 80 ? "#E8F5E9" : inspirationResult.matchScore >= 60 ? "#FFF8E1" : "#FFEBEE", borderRadius: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#333" }}>당신({kit.season})과의 매칭</span>
+                      <span style={{ fontSize: 16, fontWeight: 900, color: inspirationResult.matchScore >= 80 ? "#2E7D32" : inspirationResult.matchScore >= 60 ? "#E65100" : "#C62828" }}>
+                        {inspirationResult.matchScore}점
+                      </span>
+                    </div>
+                    <p style={{ fontSize: 11, color: "#555", lineHeight: 1.5 }}>{inspirationResult.matchComment}</p>
+                  </div>
+                )}
+              </div>
+
+              {inspirationResult.type === "makeup" && inspirationResult.details && (
+                <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 8 }}>💄 디테일</p>
+                  {[
+                    { key: "lip", label: "립", icon: "💋" },
+                    { key: "blush", label: "블러셔", icon: "🌸" },
+                    { key: "eye", label: "아이", icon: "👁" },
+                  ].filter(({key}) => inspirationResult.details[key]).map(({ key, label, icon }) => {
+                    const item = inspirationResult.details[key];
+                    return (
+                      <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 14 }}>{icon}</span>
+                        {item.color && isValidHex(item.color) && (
+                          <button onClick={() => copyHex(item.color)} style={{ width: 20, height: 20, borderRadius: "50%", background: item.color, border: "2px solid #fff", boxShadow: `0 0 0 1px ${item.color}`, cursor: "pointer" }} />
+                        )}
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: "#333" }}>{label}: {item.name}</p>
+                          {item.desc && <p style={{ fontSize: 10, color: "#888" }}>{item.desc}</p>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {inspirationResult.details.base && (
+                    <p style={{ fontSize: 11, color: "#666", marginTop: 6, paddingTop: 6, borderTop: "1px solid #EEE" }}>🫧 베이스: {inspirationResult.details.base}</p>
+                  )}
+                </div>
+              )}
+
+              {inspirationResult.type === "fashion" && inspirationResult.details && (
+                <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 8 }}>👗 구성</p>
+                  {[
+                    { key: "top", label: "상의", icon: "👕" },
+                    { key: "bottom", label: "하의", icon: "👖" },
+                    { key: "shoes", label: "신발", icon: "👟" },
+                    { key: "accessory", label: "기타", icon: "💼" },
+                  ].filter(({key}) => inspirationResult.details[key]).map(({ key, label, icon }) => (
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 14 }}>{icon}</span>
+                      <p style={{ fontSize: 11, color: "#555" }}><strong>{label}:</strong> {inspirationResult.details[key]}</p>
+                    </div>
+                  ))}
+                  {inspirationResult.colors && inspirationResult.colors.length > 0 && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #EEE" }}>
+                      <p style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>컬러 팔레트</p>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {inspirationResult.colors.filter((c: any) => isValidHex(c.hex)).map((c: any, i: number) => (
+                          <button key={i} onClick={() => copyHex(c.hex)} title={c.name} style={{ width: 24, height: 24, borderRadius: "50%", background: c.hex, border: "2px solid #fff", boxShadow: `0 0 0 1px ${c.hex}`, cursor: "pointer" }} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {inspirationResult.tips && inspirationResult.tips.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>💡 따라하는 팁</p>
+                  {inspirationResult.tips.map((tip: string, i: number) => (
+                    <p key={i} style={{ fontSize: 11, color: "#555", lineHeight: 1.6, marginBottom: 3 }}>• {tip}</p>
+                  ))}
+                </div>
+              )}
+
+              {inspirationResult.alternative && (
+                <div style={{ background: `${acc}10`, borderRadius: 8, padding: "8px 12px" }}>
+                  <p style={{ fontSize: 11, color: acc, lineHeight: 1.6, fontWeight: 600 }}>🎯 {inspirationResult.alternative}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
@@ -999,7 +1153,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* 이미지 확대 모달 (✕ 닫기 버튼 추가) */}
       {zoomImage && (
         <div onClick={() => setZoomImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3000, padding: 20, cursor: "pointer" }}>
           <button onClick={(e) => { e.stopPropagation(); setZoomImage(null); }} style={{ position: "absolute", top: 20, right: 20, width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.2)", color: "#fff", border: "none", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
