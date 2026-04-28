@@ -56,18 +56,22 @@ function ColorSwatch({ color, size = 40, onCopy, dim = false }: { color: string;
   );
 }
 
+type Phase = "guide" | "capture" | "wrist" | "analyzing" | "kit";
+
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const wristFileRef = useRef<HTMLInputElement>(null);
   const shopFileRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
 
-  const [phase, setPhase] = useState<"capture" | "analyzing" | "kit">("capture");
+  const [phase, setPhase] = useState<Phase>("guide");
   const [cameraOn, setCameraOn] = useState(false);
   const [photoB64, setPhotoB64] = useState<string | null>(null);
+  const [wristB64, setWristB64] = useState<string | null>(null);
   const [kit, setKit] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("palette");
   const [shopImg, setShopImg] = useState<string | null>(null);
@@ -76,6 +80,7 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [qualityIssues, setQualityIssues] = useState<{ issues: string[]; advice: string } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -144,6 +149,16 @@ export default function Home() {
     setIsUploading(false);
   };
 
+  const handleWristUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setIsUploading(true);
+    try {
+      const data = await resizeImage(f);
+      setWristB64(data);
+    } catch { setError("이미지 처리 중 오류가 발생했어요."); }
+    setIsUploading(false);
+  };
+
   const handleShopUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     if (!kit) {
@@ -161,13 +176,22 @@ export default function Home() {
     setIsAnalyzing(true);
     setPhase("analyzing");
     setError(null);
+    setQualityIssues(null);
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: photoB64 }),
+        body: JSON.stringify({ faceImage: photoB64, wristImage: wristB64 }),
       });
       const data = await res.json();
+
+      if (data.qualityFailed) {
+        setQualityIssues({ issues: data.issues, advice: data.advice });
+        setPhase("capture");
+        setIsAnalyzing(false);
+        return;
+      }
+
       if (data.error) throw new Error(data.error);
       setKit(data.kit);
       setPhase("kit");
@@ -229,11 +253,70 @@ export default function Home() {
     }
   };
 
+  const resetAll = () => {
+    setPhase("guide");
+    setKit(null);
+    setPhotoB64(null);
+    setWristB64(null);
+    setMessages([]);
+    setChatHistory([]);
+    setShopImg(null);
+    setQualityIssues(null);
+    setError(null);
+  };
+
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => () => stopCam(), []);
 
   const acc = kit ? (SEASONS[kit.season]?.accent || "#C2185B") : "#C2185B";
 
+  // ── GUIDE PHASE (체크리스트) ──
+  if (phase === "guide") return (
+    <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
+      <div style={{ width: "100%", maxWidth: 480, animation: "fadeIn 0.6s ease-out" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>🎨</div>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 14, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 8 }}>BEFORE WE START</p>
+          <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: "-1px", marginBottom: 10, color: "#1A1A1A" }}>정확한 진단을 위해</h1>
+          <p style={{ fontSize: 13, color: "#888", lineHeight: 1.7 }}>아래 가이드를 확인하면<br />훨씬 정확한 결과를 얻을 수 있어요</p>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 20, padding: "20px 24px", border: "1px solid #EEE", boxShadow: "0 4px 24px rgba(0,0,0,0.04)", marginBottom: 16 }}>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, fontWeight: 700, fontStyle: "italic", marginBottom: 14, color: "#1A1A1A" }}>📸 사진 촬영 가이드</p>
+          <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+            {[
+              { icon: "☀️", title: "자연광에서", desc: "오전 10시 ~ 오후 3시 햇빛이 가장 좋아요" },
+              { icon: "💄", title: "메이크업 NO", desc: "민낯이거나 가벼운 베이스만" },
+              { icon: "👕", title: "흰색 옷 / 배경", desc: "다른 색이 피부에 비치지 않도록" },
+              { icon: "👀", title: "정면, 가까이", desc: "얼굴이 화면 절반 이상 차지하게" },
+              { icon: "🤚", title: "손목 사진도 (선택)", desc: "정맥 색이 진단에 큰 도움이 돼요" },
+            ].map(item => (
+              <li key={item.title} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 22 }}>{item.icon}</span>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A" }}>{item.title}</p>
+                  <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginTop: 2 }}>{item.desc}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <button
+          onClick={() => setPhase("capture")}
+          style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}
+        >
+          ✨ 시작하기
+        </button>
+        <p style={{ fontSize: 11, color: "#BBB", textAlign: "center", marginTop: 12 }}>약 30초 ~ 1분 소요</p>
+      </div>
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+    </div>
+  );
+
+  // ── ANALYZING ──
   if (phase === "analyzing") {
     const steps = ["📸 사진 분석 중", "🎨 피부톤 측정 중", "✨ 컬러 매칭 중", "💄 키트 생성 중"];
     return (
@@ -275,15 +358,28 @@ export default function Home() {
     );
   }
 
+  // ── CAPTURE PHASE ──
   if (phase === "capture") return (
     <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
       <div style={{ width: "100%", maxWidth: 440, animation: "fadeIn 0.6s ease-out" }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>🎨</div>
-          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 14, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 8 }}>YOUR PERSONAL</p>
-          <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-1px", marginBottom: 10, color: "#1A1A1A" }}>나만의 컬러 키트</h1>
-          <p style={{ fontSize: 14, color: "#888", lineHeight: 1.7 }}>사진 한 장으로 퍼스널 컬러를 분석하고<br />맞춤 팔레트·메이크업·패션·레이어링 키트를 만들어요</p>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 13, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 6 }}>STEP 1 / 2</p>
+          <h1 style={{ fontSize: 24, fontWeight: 900, letterSpacing: "-1px", marginBottom: 6, color: "#1A1A1A" }}>얼굴 사진 📷</h1>
+          <p style={{ fontSize: 13, color: "#888", lineHeight: 1.6 }}>자연광에서 메이크업 없이 정면으로</p>
         </div>
+
+        {/* 품질 이슈 안내 */}
+        {qualityIssues && (
+          <div style={{ background: "#FFF8E1", border: "1px solid #FFD54F", borderRadius: 16, padding: "14px 18px", marginBottom: 16 }}>
+            <p style={{ fontSize: 13, fontWeight: 800, color: "#E65100", marginBottom: 8 }}>⚠️ 사진을 다시 찍어주세요</p>
+            <ul style={{ listStyle: "none", marginBottom: 8 }}>
+              {qualityIssues.issues.map((iss, i) => (
+                <li key={i} style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>• {iss}</li>
+              ))}
+            </ul>
+            <p style={{ fontSize: 12, color: "#444", lineHeight: 1.6, fontStyle: "italic" }}>💡 {qualityIssues.advice}</p>
+          </div>
+        )}
 
         <div style={{ background: "#fff", borderRadius: 24, border: "1px solid #EEE", overflow: "hidden", marginBottom: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.04)" }}>
           <div style={{ position: "relative", aspectRatio: "4/3", background: "#F8F6F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -325,16 +421,12 @@ export default function Home() {
         )}
 
         <button
-          onClick={analyzeColor}
+          onClick={() => setPhase("wrist")}
           disabled={!photoB64}
-          style={{ width: "100%", padding: "18px", borderRadius: 18, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 16, fontWeight: 900, cursor: photoB64 ? "pointer" : "not-allowed", boxShadow: photoB64 ? "0 8px 24px rgba(194,24,91,0.3)" : "none", transition: "all 0.2s" }}
+          style={{ width: "100%", padding: "16px", borderRadius: 16, border: "none", background: photoB64 ? "linear-gradient(135deg,#C2185B,#880E4F)" : "#E0DDD8", color: photoB64 ? "#fff" : "#AAA", fontSize: 15, fontWeight: 800, cursor: photoB64 ? "pointer" : "not-allowed", transition: "all 0.2s" }}
         >
-          ✨ 내 컬러 키트 만들기
+          다음 단계 → 손목 사진
         </button>
-
-        <p style={{ fontSize: 11, color: "#BBB", textAlign: "center", marginTop: 16, lineHeight: 1.6 }}>
-          💡 더 정확한 분석을 위해<br />자연광에서 메이크업 없이 정면 사진을 추천해요
-        </p>
       </div>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -343,6 +435,73 @@ export default function Home() {
     </div>
   );
 
+  // ── WRIST PHASE ──
+  if (phase === "wrist") return (
+    <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
+      <div style={{ width: "100%", maxWidth: 440, animation: "fadeIn 0.6s ease-out" }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 13, color: "#C2185B", fontStyle: "italic", letterSpacing: 2, marginBottom: 6 }}>STEP 2 / 2</p>
+          <h1 style={{ fontSize: 24, fontWeight: 900, letterSpacing: "-1px", marginBottom: 6, color: "#1A1A1A" }}>손목 사진 🤚</h1>
+          <p style={{ fontSize: 13, color: "#888", lineHeight: 1.6 }}>손목 안쪽 정맥 색이 진단의 핵심이에요<br /><span style={{ color: "#BBB" }}>(생략하셔도 됩니다)</span></p>
+        </div>
+
+        <div style={{ background: "#FFF8E1", border: "1px solid #FFE082", borderRadius: 16, padding: "14px 18px", marginBottom: 16 }}>
+          <p style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>
+            💡 <strong>찍는 방법:</strong> 손목 안쪽이 위로 오게, 자연광에서 정맥이 잘 보이게 찍어주세요.<br />
+            🌿 <strong>초록빛</strong> = 웜톤 / 💙 <strong>파란빛</strong> = 쿨톤
+          </p>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 24, border: "1px solid #EEE", overflow: "hidden", marginBottom: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.04)" }}>
+          <div style={{ position: "relative", aspectRatio: "4/3", background: "#F8F6F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {!wristB64 && !isUploading && (
+              <div style={{ textAlign: "center", color: "#CCC" }}>
+                <div style={{ fontSize: 40 }}>🤚</div>
+                <div style={{ fontSize: 13, marginTop: 8 }}>손목 사진 업로드</div>
+              </div>
+            )}
+            {isUploading && (
+              <div style={{ textAlign: "center", color: "#C2185B" }}>
+                <div style={{ width: 32, height: 32, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", margin: "0 auto", animation: "spin 0.8s linear infinite" }} />
+                <div style={{ fontSize: 13, marginTop: 12, fontWeight: 600 }}>이미지 처리 중...</div>
+              </div>
+            )}
+            {wristB64 && !isUploading && (
+              <img src={`data:image/jpeg;base64,${wristB64}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+            )}
+          </div>
+          <div style={{ padding: 16, display: "flex", gap: 8 }}>
+            <button onClick={() => wristFileRef.current?.click()} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              {wristB64 ? "🔄 다시 업로드" : "📁 손목 사진 업로드"}
+            </button>
+          </div>
+        </div>
+
+        <input ref={wristFileRef} type="file" accept="image/*" onChange={handleWristUpload} style={{ display: "none" }} />
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => setPhase("capture")}
+            style={{ flex: 1, padding: "16px", borderRadius: 16, border: "1px solid #DDD", background: "#fff", color: "#666", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+          >
+            ← 이전
+          </button>
+          <button
+            onClick={analyzeColor}
+            style={{ flex: 2, padding: "16px", borderRadius: 16, border: "none", background: "linear-gradient(135deg,#C2185B,#880E4F)", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(194,24,91,0.3)" }}
+          >
+            ✨ 분석 시작 {!wristB64 && "(손목 없이)"}
+          </button>
+        </div>
+      </div>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+    </div>
+  );
+
+  // ── KIT PHASE ──
   const KitContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", animation: "fadeIn 0.5s ease-out" }}>
       <div style={{ background: SEASONS[kit?.season]?.bg || "#FFF0F4", padding: "14px 20px", borderBottom: "1px solid #EEE" }}>
@@ -531,7 +690,7 @@ export default function Home() {
           </div>
           {kit && <span style={{ fontSize: 10, background: acc, color: "#fff", padding: "3px 10px", borderRadius: 20, fontWeight: 700, marginLeft: 4 }}>{kit.season}</span>}
         </div>
-        <button onClick={() => { setPhase("capture"); setKit(null); setPhotoB64(null); setMessages([]); setChatHistory([]); setShopImg(null); }} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "5px 14px", cursor: "pointer", fontWeight: 600 }}>🔄 재분석</button>
+        <button onClick={resetAll} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "5px 14px", cursor: "pointer", fontWeight: 600 }}>🔄 재분석</button>
       </header>
 
       {isMobile ? (

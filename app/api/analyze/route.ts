@@ -6,35 +6,50 @@ const client = new Anthropic();
 
 export async function POST(req: NextRequest) {
   try {
-    const { imageBase64 } = await req.json();
+    const { faceImage, wristImage } = await req.json();
 
-    if (!imageBase64) {
-      return NextResponse.json({ error: "이미지가 없어요." }, { status: 400 });
+    if (!faceImage) {
+      return NextResponse.json({ error: "얼굴 사진이 없어요." }, { status: 400 });
+    }
+
+    // 이미지 컨텐츠 배열 만들기
+    const content: any[] = [
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: faceImage,
+        },
+      },
+    ];
+
+    // 손목 사진이 있으면 추가
+    if (wristImage) {
+      content.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: wristImage,
+        },
+      });
+      content.push({
+        type: "text",
+        text: "첫 번째 사진은 얼굴, 두 번째 사진은 손목이에요. " + ANALYSIS_PROMPT,
+      });
+    } else {
+      content.push({
+        type: "text",
+        text: "얼굴 사진만 있어요 (손목 사진은 없음). " + ANALYSIS_PROMPT,
+      });
     }
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-5",
       max_tokens: 1500,
-      temperature: 0, // 일관성 있는 결과를 위해 0으로 고정 (창의성 OFF)
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/jpeg",
-                data: imageBase64,
-              },
-            },
-            {
-              type: "text",
-              text: ANALYSIS_PROMPT,
-            },
-          ],
-        },
-      ],
+      temperature: 0,
+      messages: [{ role: "user", content }],
     });
 
     const raw = response.content
@@ -43,9 +58,18 @@ export async function POST(req: NextRequest) {
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("JSON을 찾을 수 없어요");
-    const kit = JSON.parse(jsonMatch[0]);
+    const result = JSON.parse(jsonMatch[0]);
 
-    return NextResponse.json({ kit });
+    // 사진 품질 체크 실패 시
+    if (result.quality_check && !result.quality_check.ok) {
+      return NextResponse.json({
+        qualityFailed: true,
+        issues: result.quality_check.issues || [],
+        advice: result.quality_check.advice || "사진을 다시 찍어주세요.",
+      });
+    }
+
+    return NextResponse.json({ kit: result });
   } catch (error) {
     console.error("Analyze error:", error);
     return NextResponse.json(
