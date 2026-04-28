@@ -66,7 +66,13 @@ function ColorCard({ color, onCopy, dim = false }: { color: any; onCopy: (c: str
 
 type Phase = "guide" | "capture" | "wrist" | "analyzing" | "kit";
 type ClothItem = { id: string; image: string; category: string; type: string; mainColor: string; colorName: string; mood: string; season: string[]; name: string };
-type SavedOutfit = { id: string; title: string; mood: string; items: number[]; reason: string; tip: string; savedAt: number; itemSnapshots: ClothItem[] };
+// 즐겨찾기는 옷 ID만 저장 (용량 절약)
+type SavedOutfit = { id: string; title: string; mood: string; itemIds: string[]; reason: string; tip: string; savedAt: number; signature: string };
+
+// 코디 고유 식별 (중복 방지용)
+const makeOutfitSignature = (title: string, itemIds: string[]) => {
+  return `${title}::${[...itemIds].sort().join(",")}`;
+};
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -100,7 +106,6 @@ export default function Home() {
   const [analyzeStep, setAnalyzeStep] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
-  // 옷장
   const [clothes, setClothes] = useState<ClothItem[]>([]);
   const [clothesLoaded, setClothesLoaded] = useState(false);
   const [isClothLoading, setIsClothLoading] = useState(false);
@@ -108,10 +113,10 @@ export default function Home() {
   const [outfits, setOutfits] = useState<any[]>([]);
   const [outfitLoading, setOutfitLoading] = useState(false);
   const [situationInput, setSituationInput] = useState("");
-  const [selectedBaseItem, setSelectedBaseItem] = useState<number | null>(null);
+  // 기준 옷을 ID로 관리 (필터 시에도 안전)
+  const [selectedBaseId, setSelectedBaseId] = useState<string | null>(null);
   const [editingCloth, setEditingCloth] = useState<ClothItem | null>(null);
 
-  // 새 기능
   const [categoryFilter, setCategoryFilter] = useState<string>("전체");
   const [savedOutfits, setSavedOutfits] = useState<SavedOutfit[]>([]);
   const [showSaved, setShowSaved] = useState(false);
@@ -119,7 +124,6 @@ export default function Home() {
   const [weather, setWeather] = useState<{ temp: number; desc: string; emoji: string } | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
 
-  // 옷장 데이터 불러오기
   useEffect(() => {
     try {
       const saved = localStorage.getItem("colorkit_clothes");
@@ -130,14 +134,12 @@ export default function Home() {
     setClothesLoaded(true);
   }, []);
 
-  // 옷장 저장
   useEffect(() => {
     if (!clothesLoaded) return;
     try { localStorage.setItem("colorkit_clothes", JSON.stringify(clothes)); }
-    catch { setToast("⚠️ 저장 공간 부족, 일부 옷 삭제 필요"); setTimeout(() => setToast(null), 3000); }
+    catch { setToast("⚠️ 저장 공간 부족"); setTimeout(() => setToast(null), 3000); }
   }, [clothes, clothesLoaded]);
 
-  // 즐겨찾기 저장
   useEffect(() => {
     if (!clothesLoaded) return;
     try { localStorage.setItem("colorkit_saved_outfits", JSON.stringify(savedOutfits)); } catch {}
@@ -156,7 +158,6 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
-  // 날씨 가져오기 (브라우저 위치 기반, 무료 API)
   const fetchWeather = async () => {
     setWeatherLoading(true);
     try {
@@ -164,7 +165,6 @@ export default function Home() {
         navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
       });
       const { latitude, longitude } = pos.coords;
-      // Open-Meteo 무료 API (키 필요 없음)
       const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&timezone=auto`);
       const data = await res.json();
       const temp = Math.round(data.current.temperature_2m);
@@ -277,7 +277,7 @@ export default function Home() {
 
   const removeCloth = (id: string) => {
     setClothes(p => p.filter(c => c.id !== id));
-    if (selectedBaseItem !== null && clothes[selectedBaseItem]?.id === id) setSelectedBaseItem(null);
+    if (selectedBaseId === id) setSelectedBaseId(null);
   };
 
   const updateCloth = (updated: ClothItem) => {
@@ -292,19 +292,24 @@ export default function Home() {
     }
     setOutfitLoading(true);
     try {
+      // 기준 옷의 인덱스 (현재 clothes 배열 기준)
+      const baseItemIndex = selectedBaseId ? clothes.findIndex(c => c.id === selectedBaseId) : null;
       const res = await fetch("/api/outfit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           clothes: clothes.map(c => ({ name: c.name, category: c.category, type: c.type, mainColor: c.mainColor, colorName: c.colorName, mood: c.mood, season: c.season })),
-          kit, situation: situationInput || undefined, baseItem: selectedBaseItem,
+          kit, situation: situationInput || undefined,
+          baseItem: baseItemIndex !== null && baseItemIndex >= 0 ? baseItemIndex : null,
         }),
       });
       const data = await res.json();
       if (data.outfits) {
         const validOutfits = data.outfits.map((o: any) => ({
-          ...o, items: (o.items || []).filter((i: number) => i >= 0 && i < clothes.length),
-        })).filter((o: any) => o.items.length > 0);
+          ...o,
+          // 인덱스를 ID로 변환해서 저장 (옷 삭제 시에도 안전)
+          itemIds: (o.items || []).filter((i: number) => i >= 0 && i < clothes.length).map((i: number) => clothes[i].id),
+        })).filter((o: any) => o.itemIds.length > 0);
         setOutfits(validOutfits);
         setTimeout(() => outfitResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
       }
@@ -312,15 +317,31 @@ export default function Home() {
     setOutfitLoading(false);
   };
 
-  const saveOutfit = (outfit: any) => {
-    const itemSnapshots = outfit.items.map((i: number) => clothes[i]).filter(Boolean);
-    const saved: SavedOutfit = {
-      id: Date.now().toString() + Math.random().toString(36).slice(2),
-      title: outfit.title, mood: outfit.mood, items: outfit.items,
-      reason: outfit.reason, tip: outfit.tip, savedAt: Date.now(), itemSnapshots,
-    };
-    setSavedOutfits(p => [saved, ...p]);
-    setToast("💕 즐겨찾기에 저장됐어요"); setTimeout(() => setToast(null), 1500);
+  // 즐겨찾기 토글 (이미 저장된 거면 삭제)
+  const toggleSaveOutfit = (outfit: any) => {
+    const signature = makeOutfitSignature(outfit.title, outfit.itemIds);
+    const existing = savedOutfits.find(s => s.signature === signature);
+    if (existing) {
+      setSavedOutfits(p => p.filter(s => s.signature !== signature));
+      setToast("💔 즐겨찾기에서 제거됐어요");
+    } else {
+      const saved: SavedOutfit = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2),
+        title: outfit.title, mood: outfit.mood,
+        itemIds: outfit.itemIds, // ID만 저장 (용량 절약!)
+        reason: outfit.reason, tip: outfit.tip,
+        savedAt: Date.now(),
+        signature,
+      };
+      setSavedOutfits(p => [saved, ...p]);
+      setToast("💕 즐겨찾기에 저장됐어요");
+    }
+    setTimeout(() => setToast(null), 1500);
+  };
+
+  const isOutfitSaved = (outfit: any) => {
+    const signature = makeOutfitSignature(outfit.title, outfit.itemIds);
+    return savedOutfits.some(s => s.signature === signature);
   };
 
   const removeSavedOutfit = (id: string) => {
@@ -403,11 +424,11 @@ export default function Home() {
   useEffect(() => () => stopCam(), []);
 
   const acc = kit ? (SEASONS[kit.season]?.accent || "#C2185B") : "#C2185B";
-
-  // 필터링된 옷장
   const filteredClothes = categoryFilter === "전체" ? clothes : clothes.filter(c => c.category === categoryFilter);
 
-  // 통계 계산
+  // 옷 ID로 옷 객체 찾기
+  const findClothById = (id: string) => clothes.find(c => c.id === id);
+
   const stats = {
     total: clothes.length,
     byCategory: CATEGORIES.map(cat => ({ cat, count: clothes.filter(c => c.category === cat).length })).filter(x => x.count > 0),
@@ -415,7 +436,6 @@ export default function Home() {
     topColors: Object.entries(clothes.reduce((acc: Record<string, number>, c) => { acc[c.colorName] = (acc[c.colorName] || 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1]).slice(0, 5),
   };
 
-  // ── GUIDE / CAPTURE / WRIST / ANALYZING (이전과 동일) ──
   if (phase === "guide") return (
     <div style={{ minHeight: "100vh", background: "#FAFAF7", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR',sans-serif", padding: 24 }}>
       <div style={{ width: "100%", maxWidth: 480, animation: "fadeIn 0.6s ease-out" }}>
@@ -459,7 +479,7 @@ export default function Home() {
         <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, marginBottom: 8, fontStyle: "italic" }}>Analyzing your colors</h2>
         <p style={{ fontSize: 13, color: "#888", marginBottom: 32 }}>잠시만 기다려주세요...</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
-          {steps.map((s, i) => (<div key={s} style={{ fontSize: 13, color: i === analyzeStep ? "#C2185B" : i < analyzeStep ? "#999" : "#CCC", fontWeight: i === analyzeStep ? 700 : 500, transition: "all 0.3s" }}>{i < analyzeStep ? "✓ " : ""}{s}{i === analyzeStep ? "..." : ""}</div>))}
+          {steps.map((s, i) => (<div key={s} style={{ fontSize: 13, color: i === analyzeStep ? "#C2185B" : i < analyzeStep ? "#999" : "#CCC", fontWeight: i === analyzeStep ? 700 : 500 }}>{i < analyzeStep ? "✓ " : ""}{s}{i === analyzeStep ? "..." : ""}</div>))}
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
@@ -615,12 +635,12 @@ export default function Home() {
   const WardrobeContent = (
     <div style={{ background: "#fff", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ padding: "14px 20px", borderBottom: "1px solid #EEE", background: "#FAFAF7" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, fontStyle: "italic" }}>My Wardrobe</p>
-            <p style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{clothes.length}벌 {clothProgress && `· ${clothProgress.current}/${clothProgress.total} 분석 중`}</p>
+            <p style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{clothes.length}벌 {clothProgress && `· ${clothProgress.current}/${clothProgress.total}`}</p>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             <button onClick={() => { setShowStats(!showStats); setShowSaved(false); }} title="통계" style={{ background: showStats ? acc : "#fff", color: showStats ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📊</button>
             <button onClick={() => { setShowSaved(!showSaved); setShowStats(false); }} title="즐겨찾기" style={{ background: showSaved ? acc : "#fff", color: showSaved ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>💕 {savedOutfits.length}</button>
             <button onClick={() => clothFileRef.current?.click()} disabled={isClothLoading} style={{ background: acc, color: "#fff", border: "none", borderRadius: 20, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: isClothLoading ? "not-allowed" : "pointer", opacity: isClothLoading ? 0.6 : 1 }}>+ 추가</button>
@@ -628,10 +648,9 @@ export default function Home() {
           <input ref={clothFileRef} type="file" accept="image/*" multiple onChange={handleClothUpload} style={{ display: "none" }} />
         </div>
 
-        {/* 카테고리 필터 */}
-        {clothes.length > 0 && !showSaved && !showStats && (
+        {clothes.length > 0 && !showSaved && !showStats && stats.byCategory.length > 1 && (
           <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-            {["전체", ...CATEGORIES.filter(cat => clothes.some(c => c.category === cat))].map(cat => (
+            {["전체", ...stats.byCategory.map(s => s.cat)].map(cat => (
               <button key={cat} onClick={() => setCategoryFilter(cat)} style={{ background: categoryFilter === cat ? acc : "#fff", color: categoryFilter === cat ? "#fff" : "#666", border: "1px solid #DDD", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
                 {cat}{cat !== "전체" && ` ${clothes.filter(c => c.category === cat).length}`}
               </button>
@@ -641,7 +660,6 @@ export default function Home() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-        {/* 통계 보기 */}
         {showStats && (
           <div style={{ animation: "fadeIn 0.3s" }}>
             <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 700, fontStyle: "italic", marginBottom: 16 }}>📊 Wardrobe Stats</p>
@@ -651,15 +669,13 @@ export default function Home() {
               {stats.byCategory.map(s => (
                 <div key={s.cat} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 11, width: 70, color: "#666" }}>{s.cat}</span>
-                  <div style={{ flex: 1, height: 8, background: "#EEE", borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ width: `${(s.count / stats.total) * 100}%`, height: "100%", background: acc, borderRadius: 4 }} />
-                  </div>
+                  <div style={{ flex: 1, height: 8, background: "#EEE", borderRadius: 4, overflow: "hidden" }}><div style={{ width: `${(s.count / stats.total) * 100}%`, height: "100%", background: acc, borderRadius: 4 }} /></div>
                   <span style={{ fontSize: 11, color: "#888", width: 24, textAlign: "right" }}>{s.count}</span>
                 </div>
               ))}
             </div>
             <div style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, marginBottom: 14 }}>
-              <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 10 }}>🎨 자주 입는 색상 TOP 5</p>
+              <p style={{ fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 10 }}>🎨 보유한 색상 TOP 5</p>
               {stats.topColors.map(([name, count], i) => (
                 <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 11, width: 20, color: "#999" }}>{i + 1}</span>
@@ -677,34 +693,44 @@ export default function Home() {
           </div>
         )}
 
-        {/* 즐겨찾기 보기 */}
         {showSaved && (
           <div style={{ animation: "fadeIn 0.3s" }}>
             <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 700, fontStyle: "italic", marginBottom: 16 }}>💕 Saved Outfits</p>
             {savedOutfits.length === 0 ? (
-              <p style={{ fontSize: 12, color: "#999", textAlign: "center", padding: "30px 20px" }}>아직 저장된 코디가 없어요<br />추천 받은 코디를 ♡ 눌러서 저장해보세요</p>
+              <div style={{ textAlign: "center", padding: "30px 20px" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>💝</div>
+                <p style={{ fontSize: 13, color: "#888", lineHeight: 1.7 }}>아직 저장된 코디가 없어요<br />추천 받은 코디의 ♡를 눌러보세요</p>
+              </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {savedOutfits.map(out => (
-                  <div key={out.id} style={{ background: "#fff", border: `2px solid ${acc}20`, borderRadius: 16, padding: 14 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                      <p style={{ fontSize: 14, fontWeight: 800, color: acc }}>{out.title}</p>
-                      <button onClick={() => removeSavedOutfit(out.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>🗑️</button>
+                {savedOutfits.map(out => {
+                  const items = out.itemIds.map(id => findClothById(id)).filter(Boolean) as ClothItem[];
+                  return (
+                    <div key={out.id} style={{ background: "#fff", border: `2px solid ${acc}20`, borderRadius: 16, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                        <p style={{ fontSize: 14, fontWeight: 800, color: acc }}>{out.title}</p>
+                        <button onClick={() => removeSavedOutfit(out.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>🗑️</button>
+                      </div>
+                      <p style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{out.mood}</p>
+                      {items.length > 0 ? (
+                        <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
+                          {items.map((item, i) => (<img key={i} src={`data:image/jpeg;base64,${item.image}`} style={{ width: 80, height: 100, borderRadius: 10, objectFit: "cover", flexShrink: 0, border: "1px solid #EEE" }} alt="" />))}
+                        </div>
+                      ) : (
+                        <div style={{ background: "#FFF8E1", border: "1px solid #FFE082", borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                          <p style={{ fontSize: 11, color: "#E65100" }}>⚠️ 일부 옷이 옷장에서 삭제됐어요</p>
+                        </div>
+                      )}
+                      <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6, marginBottom: 8 }}>{out.reason}</p>
+                      <div style={{ background: `${acc}10`, borderRadius: 8, padding: "8px 12px" }}><p style={{ fontSize: 11, color: acc, lineHeight: 1.6, fontWeight: 600 }}>💡 {out.tip}</p></div>
                     </div>
-                    <p style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{out.mood}</p>
-                    <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
-                      {out.itemSnapshots?.map((item, i) => (<img key={i} src={`data:image/jpeg;base64,${item.image}`} style={{ width: 80, height: 100, borderRadius: 10, objectFit: "cover", flexShrink: 0, border: "1px solid #EEE" }} alt="" />))}
-                    </div>
-                    <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6, marginBottom: 8 }}>{out.reason}</p>
-                    <div style={{ background: `${acc}10`, borderRadius: 8, padding: "8px 12px" }}><p style={{ fontSize: 11, color: acc, lineHeight: 1.6, fontWeight: 600 }}>💡 {out.tip}</p></div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         )}
 
-        {/* 일반 옷장 보기 */}
         {!showSaved && !showStats && (
           <>
             {clothes.length === 0 ? (
@@ -717,30 +743,27 @@ export default function Home() {
               </div>
             ) : (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(2, 1fr)", gap: 10, marginBottom: 20 }}>
-                  {filteredClothes.map((c) => {
-                    const idx = clothes.findIndex(x => x.id === c.id);
-                    return (
-                      <div key={c.id} style={{ background: "#fff", borderRadius: 14, overflow: "hidden", border: selectedBaseItem === idx ? `2px solid ${acc}` : "1px solid #EEE", position: "relative", transition: "all 0.15s" }}>
-                        <div onClick={() => setSelectedBaseItem(selectedBaseItem === idx ? null : idx)} style={{ aspectRatio: "3/4", overflow: "hidden", position: "relative", cursor: "pointer" }}>
-                          <img src={`data:image/jpeg;base64,${c.image}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={c.name} />
-                          <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 4 }}>
-                            <button onClick={(e) => { e.stopPropagation(); setEditingCloth(c); }} style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✏️</button>
-                            <button onClick={(e) => { e.stopPropagation(); removeCloth(c.id); }} style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✕</button>
-                          </div>
-                          {selectedBaseItem === idx && (<div style={{ position: "absolute", bottom: 6, left: 6, background: acc, color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>✓ 기준</div>)}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 20 }}>
+                  {filteredClothes.map((c) => (
+                    <div key={c.id} style={{ background: "#fff", borderRadius: 14, overflow: "hidden", border: selectedBaseId === c.id ? `2px solid ${acc}` : "1px solid #EEE", position: "relative", transition: "all 0.15s" }}>
+                      <div onClick={() => setSelectedBaseId(selectedBaseId === c.id ? null : c.id)} style={{ aspectRatio: "3/4", overflow: "hidden", position: "relative", cursor: "pointer" }}>
+                        <img src={`data:image/jpeg;base64,${c.image}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={c.name} />
+                        <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 4 }}>
+                          <button onClick={(e) => { e.stopPropagation(); setEditingCloth(c); }} style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✏️</button>
+                          <button onClick={(e) => { e.stopPropagation(); removeCloth(c.id); }} style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", cursor: "pointer", fontSize: 11 }}>✕</button>
                         </div>
-                        <div style={{ padding: 10 }}>
-                          <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
-                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <div style={{ width: 12, height: 12, borderRadius: "50%", background: c.mainColor, border: "1px solid #EEE", flexShrink: 0 }} />
-                            <span style={{ fontSize: 10, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.colorName}</span>
-                          </div>
-                          <p style={{ fontSize: 9, color: "#AAA", marginTop: 3 }}>{c.category} · {c.mood}</p>
-                        </div>
+                        {selectedBaseId === c.id && (<div style={{ position: "absolute", bottom: 6, left: 6, background: acc, color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>✓ 기준</div>)}
                       </div>
-                    );
-                  })}
+                      <div style={{ padding: 10 }}>
+                        <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <div style={{ width: 12, height: 12, borderRadius: "50%", background: c.mainColor, border: "1px solid #EEE", flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.colorName}</span>
+                        </div>
+                        <p style={{ fontSize: 9, color: "#AAA", marginTop: 3 }}>{c.category} · {c.mood}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <div style={{ background: "#FAF8F5", borderRadius: 16, padding: 16, marginBottom: 16 }}>
@@ -751,7 +774,7 @@ export default function Home() {
                     </button>
                   </div>
                   <input value={situationInput} onChange={e => setSituationInput(e.target.value)} placeholder="예: 데이트, 출근 등 (선택)" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #DDD", fontSize: 12, outline: "none", marginBottom: 10, fontFamily: "inherit" }} />
-                  {selectedBaseItem !== null && clothes[selectedBaseItem] && (<p style={{ fontSize: 11, color: acc, marginBottom: 8, fontWeight: 600 }}>📌 기준: {clothes[selectedBaseItem].name}</p>)}
+                  {selectedBaseId && findClothById(selectedBaseId) && (<p style={{ fontSize: 11, color: acc, marginBottom: 8, fontWeight: 600 }}>📌 기준: {findClothById(selectedBaseId)?.name}</p>)}
                   <button onClick={recommendOutfit} disabled={outfitLoading || clothes.length < 2} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: clothes.length < 2 ? "#DDD" : `linear-gradient(135deg,${acc},${acc}AA)`, color: "#fff", fontSize: 13, fontWeight: 800, cursor: clothes.length < 2 ? "not-allowed" : "pointer" }}>
                     {outfitLoading ? "AI가 코디 짜는 중..." : "🎨 코디 추천 받기"}
                   </button>
@@ -761,20 +784,26 @@ export default function Home() {
                 {outfits.length > 0 && (
                   <div ref={outfitResultRef} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, fontStyle: "italic" }}>Recommended 💕</p>
-                    {outfits.map((out, idx) => (
-                      <div key={idx} style={{ background: "#fff", border: `2px solid ${acc}20`, borderRadius: 16, padding: 14 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                          <p style={{ fontSize: 14, fontWeight: 800, color: acc }}>{out.title}</p>
-                          <button onClick={() => saveOutfit(out)} title="즐겨찾기에 저장" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16 }}>♡</button>
+                    {outfits.map((out, idx) => {
+                      const saved = isOutfitSaved(out);
+                      const items = out.itemIds.map((id: string) => findClothById(id)).filter(Boolean) as ClothItem[];
+                      return (
+                        <div key={idx} style={{ background: "#fff", border: `2px solid ${acc}20`, borderRadius: 16, padding: 14 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                            <p style={{ fontSize: 14, fontWeight: 800, color: acc }}>{out.title}</p>
+                            <button onClick={() => toggleSaveOutfit(out)} title={saved ? "즐겨찾기 해제" : "즐겨찾기 저장"} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: saved ? acc : "#CCC" }}>
+                              {saved ? "♥" : "♡"}
+                            </button>
+                          </div>
+                          <p style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{out.mood}</p>
+                          <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
+                            {items.map((item, i) => (<img key={i} src={`data:image/jpeg;base64,${item.image}`} style={{ width: 80, height: 100, borderRadius: 10, objectFit: "cover", flexShrink: 0, border: "1px solid #EEE" }} alt="" />))}
+                          </div>
+                          <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6, marginBottom: 8 }}>{out.reason}</p>
+                          <div style={{ background: `${acc}10`, borderRadius: 8, padding: "8px 12px" }}><p style={{ fontSize: 11, color: acc, lineHeight: 1.6, fontWeight: 600 }}>💡 {out.tip}</p></div>
                         </div>
-                        <p style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{out.mood}</p>
-                        <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
-                          {out.items?.filter((i: number) => i >= 0 && i < clothes.length).map((itemIdx: number) => (<img key={itemIdx} src={`data:image/jpeg;base64,${clothes[itemIdx].image}`} style={{ width: 80, height: 100, borderRadius: 10, objectFit: "cover", flexShrink: 0, border: "1px solid #EEE" }} alt="" />))}
-                        </div>
-                        <p style={{ fontSize: 12, color: "#555", lineHeight: 1.6, marginBottom: 8 }}>{out.reason}</p>
-                        <div style={{ background: `${acc}10`, borderRadius: 8, padding: "8px 12px" }}><p style={{ fontSize: 11, color: acc, lineHeight: 1.6, fontWeight: 600 }}>💡 {out.tip}</p></div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </>
