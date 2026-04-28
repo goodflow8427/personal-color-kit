@@ -11,7 +11,8 @@ const SEASONS: Record<string, { bg: string; accent: string; label: string }> = {
 
 const isValidHex = (color: string) => /^#[0-9A-F]{6}$/i.test(color);
 
-const resizeImage = (file: File, maxWidth = 800): Promise<{data: string, type: string}> =>
+// 이미지 리사이즈 (canvas 기반) - 800px 이하로 축소
+const resizeImage = (file: File, maxWidth = 800): Promise<string> =>
   new Promise((res) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -22,13 +23,20 @@ const resizeImage = (file: File, maxWidth = 800): Promise<{data: string, type: s
       canvas.height = img.height * scale;
       canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
-      res({
-        data: canvas.toDataURL("image/jpeg", 0.85).split(",")[1],
-        type: "image/jpeg"
-      });
+      res(canvas.toDataURL("image/jpeg", 0.85).split(",")[1]);
     };
     img.src = url;
   });
+
+// 캔버스 데이터를 800px로 리사이즈
+const resizeCanvas = (sourceCanvas: HTMLCanvasElement, maxWidth = 800): string => {
+  const scale = Math.min(1, maxWidth / sourceCanvas.width);
+  const canvas = document.createElement("canvas");
+  canvas.width = sourceCanvas.width * scale;
+  canvas.height = sourceCanvas.height * scale;
+  canvas.getContext("2d")?.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+};
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -37,6 +45,7 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
   const shopFileRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const isComposingRef = useRef(false); // 한글 IME 입력 중 체크
 
   const [phase, setPhase] = useState<"capture" | "analyzing" | "kit">("capture");
   const [cameraOn, setCameraOn] = useState(false);
@@ -50,6 +59,7 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false); // 업로드 로딩
 
   const startCam = async () => {
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -58,6 +68,7 @@ export default function Home() {
       streamRef.current = s;
       if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play(); }
       setCameraOn(true);
+      setError(null); // 카메라 켤 때 에러 초기화
     } catch { setError("카메라 권한을 허용해주세요."); }
   };
 
@@ -70,16 +81,27 @@ export default function Home() {
   const captureSnap = () => {
     const v = videoRef.current, c = canvasRef.current;
     if (!v || !c) return;
-    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
     c.getContext("2d")?.drawImage(v, 0, 0);
-    setPhotoB64(c.toDataURL("image/jpeg", 0.85).split(",")[1]);
+    // 카메라 사진도 800px로 리사이즈 (버그 수정)
+    const resized = resizeCanvas(c);
+    setPhotoB64(resized);
+    setError(null); // 새 사진 찍으면 에러 초기화
     stopCam();
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
-    const result = await resizeImage(f);
-    setPhotoB64(result.data);
+    setIsUploading(true);
+    try {
+      const data = await resizeImage(f);
+      setPhotoB64(data);
+      setError(null);
+    } catch {
+      setError("이미지 처리 중 오류가 발생했어요.");
+    }
+    setIsUploading(false);
   };
 
   const handleShopUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,9 +110,9 @@ export default function Home() {
       setMessages(p => [...p, { role: "ai", text: "먼저 왼쪽에서 퍼스널 컬러 분석을 완료해주세요! 📷" }]);
       return;
     }
-    const result = await resizeImage(f);
-    setShopImg(result.data);
-    await analyzeShopItem(result.data);
+    const data = await resizeImage(f);
+    setShopImg(data);
+    await analyzeShopItem(data);
   };
 
   const analyzeColor = async () => {
@@ -140,9 +162,11 @@ export default function Home() {
     setChatLoading(false);
   };
 
-  const sendChat = async () => {
-    const txt = chatInput.trim(); if (!txt || chatLoading) return;
-    setChatInput("");
+  // 자동 전송 가능하도록 메시지 텍스트를 직접 받는 버전
+  const sendChat = async (overrideText?: string) => {
+    const txt = (overrideText ?? chatInput).trim();
+    if (!txt || chatLoading) return;
+    if (!overrideText) setChatInput("");
     setMessages(p => [...p, { role: "user", text: txt }]);
     setChatLoading(true);
     try {
@@ -156,6 +180,14 @@ export default function Home() {
       setChatHistory(p => [...p, { role: "user", content: txt }, { role: "assistant", content: data.reply }]);
     } catch { setMessages(p => [...p, { role: "ai", text: "오류가 발생했어요." }]); }
     setChatLoading(false);
+  };
+
+  // 한글 IME 안전한 키 핸들러
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !isComposingRef.current && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      sendChat();
+    }
   };
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -177,26 +209,32 @@ export default function Home() {
           <div style={{ position: "relative", aspectRatio: "4/3", background: "#F8F6F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: cameraOn ? "block" : "none" }} autoPlay muted playsInline />
             <canvas ref={canvasRef} style={{ display: "none" }} />
-            {!cameraOn && !photoB64 && (
+            {!cameraOn && !photoB64 && !isUploading && (
               <div style={{ textAlign: "center", color: "#CCC" }}>
                 <div style={{ fontSize: 40 }}>📷</div>
                 <div style={{ fontSize: 13, marginTop: 8 }}>카메라 또는 사진 업로드</div>
               </div>
             )}
-            {photoB64 && !cameraOn && (
+            {isUploading && (
+              <div style={{ textAlign: "center", color: "#C2185B" }}>
+                <div style={{ width: 32, height: 32, border: "3px solid #C2185B30", borderTop: "3px solid #C2185B", borderRadius: "50%", margin: "0 auto", animation: "spin 0.8s linear infinite" }} />
+                <div style={{ fontSize: 13, marginTop: 12, fontWeight: 600 }}>이미지 처리 중...</div>
+              </div>
+            )}
+            {photoB64 && !cameraOn && !isUploading && (
               <img src={`data:image/jpeg;base64,${photoB64}`} style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} alt="" />
             )}
           </div>
           <div style={{ padding: 16, display: "flex", gap: 8 }}>
             {!cameraOn && !photoB64 && <>
-              <button onClick={startCam} style={{ flex: 2, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📷 카메라 켜기</button>
-              <button onClick={() => fileRef.current?.click()} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📁 업로드</button>
+              <button onClick={startCam} disabled={isUploading} style={{ flex: 2, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: isUploading ? "not-allowed" : "pointer", opacity: isUploading ? 0.6 : 1 }}>📷 카메라 켜기</button>
+              <button onClick={() => fileRef.current?.click()} disabled={isUploading} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: isUploading ? "not-allowed" : "pointer", opacity: isUploading ? 0.6 : 1 }}>📁 업로드</button>
             </>}
             {cameraOn && (
               <button onClick={captureSnap} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", background: "#C2185B", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📸 촬영하기</button>
             )}
             {photoB64 && !cameraOn && (
-              <button onClick={() => { setPhotoB64(null); startCam(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🔄 다시 찍기</button>
+              <button onClick={() => { setPhotoB64(null); setError(null); startCam(); }} style={{ flex: 1, padding: "11px", borderRadius: 12, border: "1px solid #DDD", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🔄 다시 찍기</button>
             )}
           </div>
         </div>
@@ -214,6 +252,9 @@ export default function Home() {
           {isAnalyzing ? "🎨 분석 중..." : "✨ 내 컬러 키트 만들기"}
         </button>
       </div>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 
@@ -226,7 +267,7 @@ export default function Home() {
           <strong style={{ fontSize: 16, letterSpacing: "-1px" }}>COLOR KIT</strong>
           {kit && <span style={{ fontSize: 10, background: acc, color: "#fff", padding: "2px 8px", borderRadius: 20 }}>{kit.season}</span>}
         </div>
-        <button onClick={() => { setPhase("capture"); setKit(null); setPhotoB64(null); setMessages([]); setChatHistory([]); }} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "4px 12px", cursor: "pointer" }}>🔄 재분석</button>
+        <button onClick={() => { setPhase("capture"); setKit(null); setPhotoB64(null); setMessages([]); setChatHistory([]); setShopImg(null); }} style={{ fontSize: 11, color: "#999", background: "none", border: "1px solid #DDD", borderRadius: 20, padding: "4px 12px", cursor: "pointer" }}>🔄 재분석</button>
       </header>
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -378,7 +419,7 @@ export default function Home() {
 
           <div style={{ padding: "6px 16px", display: "flex", gap: 6, flexWrap: "wrap" }}>
             {["이 색 나한테 어울려?","대안 색상 추천해줘","레이어링 어떻게 해?"].map(s => (
-              <button key={s} onClick={() => setChatInput(s)} style={{ background: "#F0EDE8", border: "none", borderRadius: 20, padding: "5px 11px", color: "#777", fontSize: 10, cursor: "pointer", fontWeight: 600 }}>{s}</button>
+              <button key={s} onClick={() => sendChat(s)} disabled={chatLoading} style={{ background: "#F0EDE8", border: "none", borderRadius: 20, padding: "5px 11px", color: "#777", fontSize: 10, cursor: chatLoading ? "not-allowed" : "pointer", fontWeight: 600, opacity: chatLoading ? 0.5 : 1 }}>{s}</button>
             ))}
           </div>
 
@@ -386,11 +427,13 @@ export default function Home() {
             <input
               value={chatInput}
               onChange={e => setChatInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendChat()}
+              onCompositionStart={() => { isComposingRef.current = true; }}
+              onCompositionEnd={() => { isComposingRef.current = false; }}
+              onKeyDown={handleKeyDown}
               placeholder="궁금한 점을 물어보세요..."
               style={{ flex: 1, background: "#FAF8F5", border: "1px solid #E8E4DE", borderRadius: 22, padding: "9px 16px", color: "#333", fontSize: 13, outline: "none" }}
             />
-            <button onClick={sendChat} disabled={!chatInput.trim() || chatLoading} style={{ width: 38, height: 38, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 15 }}>↑</button>
+            <button onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading} style={{ width: 38, height: 38, borderRadius: "50%", background: chatInput.trim() ? `linear-gradient(135deg,${acc},${acc}AA)` : "#EEE", border: "none", color: "#fff", cursor: chatInput.trim() ? "pointer" : "default", fontSize: 15 }}>↑</button>
           </div>
         </div>
       </div>
@@ -398,6 +441,7 @@ export default function Home() {
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
